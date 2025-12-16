@@ -11,9 +11,9 @@ A local, experiment-driven agentic system for Indian personal finance recommenda
 │  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐           │
 │  │   LAYER 0   │   │   LAYER 1   │   │   LAYER 2   │           │
 │  │  Classifier │──▶│   Context   │──▶│  Web Search │           │
-│  │  (GPT-4o-m) │   │  Injection  │   │  (Tavily)   │           │
+│  │  (GPT-4o-m) │   │  Injection  │   │    OpenAI   │           │
 │  └─────────────┘   └─────────────┘   └─────────────┘           │
-│         │                                    │                  │
+│         │                                    │                 │
 │         │ REJECT if not                     │                  │
 │         │ Indian finance                    ▼                  │
 │         │                          ┌─────────────────┐         │
