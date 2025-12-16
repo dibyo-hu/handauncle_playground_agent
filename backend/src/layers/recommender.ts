@@ -142,12 +142,12 @@ You MUST output ONLY valid JSON matching this exact schema:
   "recommendations": [
     {
       "instrument": {
-        "name": "EXACT fund name from web search results - must match exactly",
+        "name": "EXACT fund name from web search results OR existing holding name",
         "category": "one of: mutual_fund, index_fund, debt_fund, liquid_fund, elss"
       },
       "action": "one of: BUY, SELL, HOLD",
-      "rationale": "Specific reason for this fund - reference its expense ratio, returns from the search data, and why it fits this user",
-      "amount": number (in rupees, calculated based on analysis),
+      "rationale": "Specific reason for this action",
+      "amount": number (see AMOUNT RULES below),
       "execution": {
         "enabled": false,
         "label": "Execute (Coming Soon)"
@@ -156,14 +156,26 @@ You MUST output ONLY valid JSON matching this exact schema:
   ]
 }
 
+AMOUNT RULES BY ACTION TYPE:
+- BUY: Amount in rupees to invest (must be > 0)
+- SELL: Amount in rupees to redeem (must be > 0)
+- HOLD: Amount can be 0 (no action needed) or current value being held
+
+REBALANCING RULES:
+- For rebalancing/portfolio reform queries, you can recommend SELL + BUY combinations
+- Proceeds from SELL can fund BUY orders (not limited to monthly surplus)
+- Net new money needed (total BUY - total SELL) should not exceed monthly surplus
+- Example: SELL ₹2,00,000 from one fund, BUY ₹2,00,000 in another = ₹0 net new money
+
 CRITICAL RULES:
 1. conversational_response MUST feel like talking to a wise, friendly uncle - warm, personal, referencing their specific situation
-2. All fund names in recommendations MUST come from the web search results - never make up fund names
+2. Fund names for BUY must come from web search results; SELL/HOLD can reference existing holdings
 3. Amount calculations MUST be shown clearly in the analysis section with actual math
-4. Total of all amounts MUST NOT exceed monthly surplus
-5. If emergency fund gap > 0, prioritize liquid funds FIRST before equity
-6. Reference specific returns and expense ratios from the search data in rationales
-7. Be specific - don't be vague about numbers`;
+4. For NEW investments only: Total BUY amount must not exceed monthly surplus
+5. For REBALANCING: Net new money (BUY - SELL) must not exceed monthly surplus
+6. If emergency fund gap > 0, prioritize liquid funds FIRST before equity
+7. Reference specific returns and expense ratios from the search data in rationales
+8. Be specific - don't be vague about numbers`;
 
 /**
  * Build the complete prompt for recommendation generation

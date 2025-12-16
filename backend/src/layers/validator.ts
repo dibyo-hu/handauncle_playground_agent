@@ -71,24 +71,47 @@ function validateBusinessRules(
   const errors: string[] = [];
   const metrics = computeDerivedMetrics(userContext);
 
-  // Rule 1: Total amount must not exceed monthly surplus
-  const totalAmount = data.recommendations.reduce(
-    (sum, rec) => sum + rec.amount,
-    0
-  );
+  // Calculate totals by action type
+  let totalBuy = 0;
+  let totalSell = 0;
 
-  if (totalAmount > metrics.monthly_surplus) {
+  data.recommendations.forEach(rec => {
+    if (rec.action === 'BUY') {
+      totalBuy += rec.amount;
+    } else if (rec.action === 'SELL') {
+      totalSell += rec.amount;
+    }
+    // HOLD doesn't affect cash flow
+  });
+
+  // Rule 1: Net NEW money needed (BUY - SELL) must not exceed monthly surplus
+  // This allows rebalancing where sells fund buys
+  const netNewMoneyNeeded = totalBuy - totalSell;
+
+  if (netNewMoneyNeeded > metrics.monthly_surplus) {
     errors.push(
-      `Total recommendation amount (₹${totalAmount}) exceeds monthly surplus (₹${metrics.monthly_surplus})`
+      `Net new investment needed (₹${netNewMoneyNeeded} = ₹${totalBuy} buy - ₹${totalSell} sell) exceeds monthly surplus (₹${metrics.monthly_surplus})`
     );
   }
 
-  // Rule 2: All amounts must be positive
+  // Rule 2: Amounts must be valid based on action type
+  // - BUY: amount > 0 (how much to invest)
+  // - SELL: amount > 0 (how much to sell)
+  // - HOLD: amount >= 0 (can be 0, represents no new action)
   data.recommendations.forEach((rec, index) => {
-    if (rec.amount <= 0) {
-      errors.push(
-        `Recommendation ${index + 1}: Amount must be positive (got ${rec.amount})`
-      );
+    if (rec.action === 'HOLD') {
+      if (rec.amount < 0) {
+        errors.push(
+          `Recommendation ${index + 1}: HOLD amount cannot be negative (got ${rec.amount})`
+        );
+      }
+    } else {
+      // BUY or SELL must have positive amount
+      if (rec.amount <= 0) {
+        errors.push(
+          `Recommendation ${index + 1}: ${rec.action} amount must be positive (got ${rec.amount})`
+        );
+      }
     }
   });
 

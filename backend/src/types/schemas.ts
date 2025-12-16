@@ -77,7 +77,7 @@ export const RecommendationItemSchema = z.object({
   instrument: InstrumentSchema,
   action: z.enum(['BUY', 'SELL', 'HOLD']),
   rationale: z.string(),
-  amount: z.number().positive(),
+  amount: z.number().nonnegative(), // >= 0: HOLD can be 0, BUY/SELL must be > 0 (validated in business rules)
   execution: ExecutionSchema,
 });
 

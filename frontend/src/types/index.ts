@@ -50,7 +50,7 @@ export interface RecommendationItem {
   instrument: Instrument;
   action: 'BUY' | 'SELL' | 'HOLD';
   rationale: string;
-  amount: number;
+  amount: number; // >= 0: HOLD can be 0, BUY/SELL should be > 0
   execution: {
     enabled: false;
     label: 'Execute (Coming Soon)';
