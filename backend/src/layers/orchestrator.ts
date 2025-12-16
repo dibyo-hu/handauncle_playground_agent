@@ -37,7 +37,8 @@ export async function processQuery(
   config: OrchestratorConfig,
   query: string,
   userContext: UserFinanceContext,
-  customSystemPrompt?: string
+  customSystemPrompt?: string,
+  customOutputFormat?: string
 ): Promise<PlaygroundResponse> {
   const startTime = Date.now();
 
@@ -123,7 +124,8 @@ export async function processQuery(
       contextValidation.context,
       webSearchResult, // Can be undefined now
       classification.needs_recommendations,
-      customSystemPrompt
+      customSystemPrompt,
+      customOutputFormat
     );
 
     if (!recommendationResult.success) {

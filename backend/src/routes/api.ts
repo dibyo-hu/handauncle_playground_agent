@@ -9,7 +9,7 @@ import { Router, Request, Response } from 'express';
 import { PlaygroundRequestSchema } from '../types/schemas';
 import { DEFAULT_USER_CONTEXT, computeDerivedMetrics } from '../layers/context';
 import { processQuery, OrchestratorConfig } from '../layers/orchestrator';
-import { DEFAULT_SYSTEM_PROMPT } from '../layers/recommender';
+import { DEFAULT_SYSTEM_PROMPT, DEFAULT_OUTPUT_FORMAT_INSTRUCTIONS } from '../layers/recommender';
 import { logger } from '../utils/logger';
 
 export function createApiRouter(config: OrchestratorConfig): Router {
@@ -45,6 +45,16 @@ export function createApiRouter(config: OrchestratorConfig): Router {
   router.get('/default-prompt', (_req: Request, res: Response) => {
     res.json({
       system_prompt: DEFAULT_SYSTEM_PROMPT,
+    });
+  });
+
+  /**
+   * GET /api/default-output-format
+   * Returns the default output format instructions for experimentation
+   */
+  router.get('/default-output-format', (_req: Request, res: Response) => {
+    res.json({
+      output_format: DEFAULT_OUTPUT_FORMAT_INSTRUCTIONS,
     });
   });
 
@@ -92,10 +102,10 @@ export function createApiRouter(config: OrchestratorConfig): Router {
         });
       }
 
-      const { query, user_context, system_prompt } = parseResult.data;
+      const { query, user_context, system_prompt, output_format } = parseResult.data;
 
-      // Process through orchestrator with optional custom system prompt
-      const response = await processQuery(config, query, user_context, system_prompt);
+      // Process through orchestrator with optional custom prompts
+      const response = await processQuery(config, query, user_context, system_prompt, output_format);
 
       const elapsed = Date.now() - startTime;
       logger.info('API', 'Request complete', {

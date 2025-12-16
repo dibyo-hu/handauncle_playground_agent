@@ -42,12 +42,28 @@ export async function fetchDefaultPrompt(): Promise<{
 }
 
 /**
+ * Fetch default output format instructions from backend
+ */
+export async function fetchDefaultOutputFormat(): Promise<{
+  output_format: string;
+}> {
+  const response = await fetch(`${API_BASE}/default-output-format`);
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch default output format: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
  * Submit query for recommendation
  */
 export async function submitQuery(
   query: string,
   userContext: UserFinanceContext,
-  systemPrompt?: string
+  systemPrompt?: string,
+  outputFormat?: string
 ): Promise<PlaygroundResponse> {
   const response = await fetch(`${API_BASE}/recommend`, {
     method: 'POST',
@@ -58,6 +74,7 @@ export async function submitQuery(
       query,
       user_context: userContext,
       system_prompt: systemPrompt,
+      output_format: outputFormat,
     }),
   });
 

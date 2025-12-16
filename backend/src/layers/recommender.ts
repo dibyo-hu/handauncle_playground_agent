@@ -115,7 +115,8 @@ Always offer **safe, practical alternatives** when discouraging something.
 4. If relevant, suggest specific action steps
 5. End with the disclaimer`;
 
-const OUTPUT_FORMAT_INSTRUCTIONS = `
+// Exported for API access - users can customize this
+export const DEFAULT_OUTPUT_FORMAT_INSTRUCTIONS = `
 OUTPUT FORMAT:
 You MUST output ONLY valid JSON matching this exact schema:
 {
@@ -184,7 +185,8 @@ function buildRecommendationPrompt(
   query: string,
   userContext: UserFinanceContext,
   webSearchResult: WebSearchResult | undefined,
-  needsRecommendations: boolean
+  needsRecommendations: boolean,
+  customOutputFormat?: string
 ): string {
   const contextSection = formatContextForLLM(userContext);
   const metrics = computeDerivedMetrics(userContext);
@@ -194,9 +196,9 @@ function buildRecommendationPrompt(
     ? formatWebSearchForLLM(webSearchResult)
     : '<WEB_SEARCH_RESULTS>\nNo web search performed for this query.\n</WEB_SEARCH_RESULTS>';
 
-  // Different output format based on whether recommendations are needed
+  // Use custom output format if provided, otherwise use default based on query type
   const outputInstructions = needsRecommendations
-    ? OUTPUT_FORMAT_INSTRUCTIONS
+    ? (customOutputFormat || DEFAULT_OUTPUT_FORMAT_INSTRUCTIONS)
     : OUTPUT_FORMAT_INSTRUCTIONS_SIMPLE;
 
   return `${contextSection}
@@ -262,17 +264,19 @@ export async function generateRecommendation(
   userContext: UserFinanceContext,
   webSearchResult: WebSearchResult | undefined,
   needsRecommendations: boolean,
-  customSystemPrompt?: string
+  customSystemPrompt?: string,
+  customOutputFormat?: string
 ): Promise<{ raw: string; parsed: unknown }> {
   logger.recommender('Starting response generation', {
     query,
     funds_available: webSearchResult?.funds.length ?? 0,
     needs_recommendations: needsRecommendations,
     using_custom_prompt: !!customSystemPrompt,
+    using_custom_output_format: !!customOutputFormat,
   });
 
   const systemPrompt = customSystemPrompt || DEFAULT_SYSTEM_PROMPT;
-  const prompt = buildRecommendationPrompt(query, userContext, webSearchResult, needsRecommendations);
+  const prompt = buildRecommendationPrompt(query, userContext, webSearchResult, needsRecommendations, customOutputFormat);
 
   logger.recommender('Built prompt', { prompt_length: prompt.length });
 
@@ -317,7 +321,8 @@ export async function retryRecommendation(
   previousOutput: string,
   validationErrors: string[],
   needsRecommendations: boolean,
-  customSystemPrompt?: string
+  customSystemPrompt?: string,
+  customOutputFormat?: string
 ): Promise<{ raw: string; parsed: unknown }> {
   logger.recommender('Retrying with validation errors', {
     error_count: validationErrors.length,
@@ -325,7 +330,7 @@ export async function retryRecommendation(
   });
 
   const systemPrompt = customSystemPrompt || DEFAULT_SYSTEM_PROMPT;
-  const prompt = buildRecommendationPrompt(query, userContext, webSearchResult, needsRecommendations);
+  const prompt = buildRecommendationPrompt(query, userContext, webSearchResult, needsRecommendations, customOutputFormat);
 
   const retryPrompt = `${prompt}
 

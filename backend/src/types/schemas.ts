@@ -131,6 +131,7 @@ export const PlaygroundRequestSchema = z.object({
   query: z.string().min(1).max(1000),
   user_context: UserFinanceContextSchema,
   system_prompt: z.string().optional(), // Custom system prompt for experimentation
+  output_format: z.string().optional(), // Custom output format instructions for experimentation
 });
 
 export type PlaygroundRequest = z.infer<typeof PlaygroundRequestSchema>;

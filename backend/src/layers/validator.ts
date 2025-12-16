@@ -205,7 +205,8 @@ export async function generateValidatedRecommendation(
   userContext: UserFinanceContext,
   webSearchResult: WebSearchResult | undefined, // Optional - only for queries needing fund data
   needsRecommendations: boolean, // Whether to generate BUY/SELL/HOLD table
-  customSystemPrompt?: string
+  customSystemPrompt?: string,
+  customOutputFormat?: string
 ): Promise<{
   success: boolean;
   data?: RecommendationOutput;
@@ -234,7 +235,8 @@ export async function generateValidatedRecommendation(
           userContext,
           webSearchResult,
           needsRecommendations,
-          customSystemPrompt
+          customSystemPrompt,
+          customOutputFormat
         );
       } else {
         // Repair attempt: include previous errors
@@ -246,7 +248,8 @@ export async function generateValidatedRecommendation(
           lastOutput,
           lastErrors,
           needsRecommendations,
-          customSystemPrompt
+          customSystemPrompt,
+          customOutputFormat
         );
       }
 

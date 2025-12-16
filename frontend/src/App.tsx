@@ -12,9 +12,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { Loader2, AlertCircle, Activity } from 'lucide-react';
 import { ContextEditor } from './components/ContextEditor';
 import { SystemPromptEditor } from './components/SystemPromptEditor';
+import { OutputFormatEditor } from './components/OutputFormatEditor';
 import { QueryInput } from './components/QueryInput';
 import { ResultDisplay } from './components/ResultDisplay';
-import { fetchDefaultContext, fetchDefaultPrompt, submitQuery, checkHealth } from './lib/api';
+import { fetchDefaultContext, fetchDefaultPrompt, fetchDefaultOutputFormat, submitQuery, checkHealth } from './lib/api';
 import type { UserFinanceContext, PlaygroundResponse } from './types';
 
 type Status = 'idle' | 'loading' | 'error' | 'offline';
@@ -27,6 +28,8 @@ export default function App() {
   const [defaultContext, setDefaultContext] = useState<UserFinanceContext | null>(null);
   const [systemPrompt, setSystemPrompt] = useState<string>('');
   const [defaultPrompt, setDefaultPrompt] = useState<string | null>(null);
+  const [outputFormat, setOutputFormat] = useState<string>('');
+  const [defaultOutputFormat, setDefaultOutputFormat] = useState<string | null>(null);
   const [isQuerying, setIsQuerying] = useState(false);
   const [lastQuery, setLastQuery] = useState<string | null>(null);
   const [response, setResponse] = useState<PlaygroundResponse | null>(null);
@@ -39,15 +42,18 @@ export default function App() {
         await checkHealth();
 
         // Fetch defaults in parallel
-        const [contextData, promptData] = await Promise.all([
+        const [contextData, promptData, formatData] = await Promise.all([
           fetchDefaultContext(),
           fetchDefaultPrompt(),
+          fetchDefaultOutputFormat(),
         ]);
 
         setDefaultContext(contextData.context);
         setUserContext(contextData.context);
         setDefaultPrompt(promptData.system_prompt);
         setSystemPrompt(promptData.system_prompt);
+        setDefaultOutputFormat(formatData.output_format);
+        setOutputFormat(formatData.output_format);
         setStatus('idle');
       } catch (err) {
         console.error('Initialization failed:', err);
@@ -69,9 +75,10 @@ export default function App() {
       setResponse(null);
 
       try {
-        // Pass system prompt only if it's different from default
+        // Pass system prompt and output format only if different from default
         const customPrompt = systemPrompt !== defaultPrompt ? systemPrompt : undefined;
-        const result = await submitQuery(query, userContext, customPrompt);
+        const customOutputFormat = outputFormat !== defaultOutputFormat ? outputFormat : undefined;
+        const result = await submitQuery(query, userContext, customPrompt, customOutputFormat);
         setResponse(result);
       } catch (err) {
         console.error('Query failed:', err);
@@ -84,7 +91,7 @@ export default function App() {
         setIsQuerying(false);
       }
     },
-    [userContext, systemPrompt, defaultPrompt]
+    [userContext, systemPrompt, defaultPrompt, outputFormat, defaultOutputFormat]
   );
 
   // Handle replay (same query with potentially modified context/prompt)
@@ -102,6 +109,11 @@ export default function App() {
   // Handle prompt change
   const handlePromptChange = useCallback((newPrompt: string) => {
     setSystemPrompt(newPrompt);
+  }, []);
+
+  // Handle output format change
+  const handleOutputFormatChange = useCallback((newFormat: string) => {
+    setOutputFormat(newFormat);
   }, []);
 
   // Loading state
@@ -170,7 +182,7 @@ export default function App() {
           {/* Left Panel - Context & Prompt Editors */}
           <div className="lg:col-span-1 space-y-4">
             {/* User Context Editor */}
-            <div className="bg-white rounded-lg border border-surface-200 p-4 h-[400px] flex flex-col">
+            <div className="bg-white rounded-lg border border-surface-200 p-4 h-[500px] flex flex-col">
               {userContext && (
                 <ContextEditor
                   context={userContext}
@@ -186,6 +198,14 @@ export default function App() {
               prompt={systemPrompt}
               defaultPrompt={defaultPrompt}
               onChange={handlePromptChange}
+              disabled={isQuerying}
+            />
+
+            {/* Output Format Editor */}
+            <OutputFormatEditor
+              outputFormat={outputFormat}
+              defaultOutputFormat={defaultOutputFormat}
+              onChange={handleOutputFormatChange}
               disabled={isQuerying}
             />
           </div>

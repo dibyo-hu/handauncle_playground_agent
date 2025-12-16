@@ -86,7 +86,7 @@ export function SystemPromptEditor({
             onBlur={handleBlur}
             disabled={disabled}
             className={`
-              w-full h-48 p-3 text-sm rounded-lg border resize-none
+              w-full h-72 p-3 text-sm rounded-lg border resize-none
               font-mono leading-relaxed
               ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
               border-surface-200 bg-surface-50
