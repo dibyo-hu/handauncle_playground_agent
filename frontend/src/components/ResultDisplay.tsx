@@ -57,6 +57,7 @@ function ClassificationBadge({ response }: { response: PlaygroundResponse }) {
 
 function WebSearchInfo({ response }: { response: PlaygroundResponse }) {
   if (response.type !== 'success') return null;
+  if (!response.web_search) return null; // No web search was performed
 
   const { web_search } = response;
 
@@ -132,6 +133,11 @@ function AnalysisCard({ response }: { response: PlaygroundResponse }) {
 
   const { analysis } = response.recommendation;
 
+  // Don't show analysis card if no analysis data
+  if (!analysis || (!analysis.risk_assessment && !analysis.expected_returns && !analysis.allocation_reasoning && !analysis.amount_calculation)) {
+    return null;
+  }
+
   return (
     <div className="bg-surface-50 border border-surface-200 rounded-lg p-4 space-y-4">
       <div className="flex items-center gap-2 text-surface-700 mb-2">
@@ -140,45 +146,53 @@ function AnalysisCard({ response }: { response: PlaygroundResponse }) {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm font-medium text-surface-700">
-            <Shield size={14} className="text-amber-600" />
-            Risk Assessment
+        {analysis.risk_assessment && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm font-medium text-surface-700">
+              <Shield size={14} className="text-amber-600" />
+              Risk Assessment
+            </div>
+            <p className="text-sm text-surface-600 bg-white p-3 rounded border border-surface-100">
+              {analysis.risk_assessment}
+            </p>
           </div>
-          <p className="text-sm text-surface-600 bg-white p-3 rounded border border-surface-100">
-            {analysis.risk_assessment}
-          </p>
-        </div>
+        )}
 
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm font-medium text-surface-700">
-            <TrendingUp size={14} className="text-green-600" />
-            Expected Returns
+        {analysis.expected_returns && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm font-medium text-surface-700">
+              <TrendingUp size={14} className="text-green-600" />
+              Expected Returns
+            </div>
+            <p className="text-sm text-surface-600 bg-white p-3 rounded border border-surface-100">
+              {analysis.expected_returns}
+            </p>
           </div>
-          <p className="text-sm text-surface-600 bg-white p-3 rounded border border-surface-100">
-            {analysis.expected_returns}
-          </p>
-        </div>
+        )}
 
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm font-medium text-surface-700">
-            <Target size={14} className="text-blue-600" />
-            Allocation Reasoning
+        {analysis.allocation_reasoning && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm font-medium text-surface-700">
+              <Target size={14} className="text-blue-600" />
+              Allocation Reasoning
+            </div>
+            <p className="text-sm text-surface-600 bg-white p-3 rounded border border-surface-100">
+              {analysis.allocation_reasoning}
+            </p>
           </div>
-          <p className="text-sm text-surface-600 bg-white p-3 rounded border border-surface-100">
-            {analysis.allocation_reasoning}
-          </p>
-        </div>
+        )}
 
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm font-medium text-surface-700">
-            <Calculator size={14} className="text-purple-600" />
-            Amount Calculation
+        {analysis.amount_calculation && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm font-medium text-surface-700">
+              <Calculator size={14} className="text-purple-600" />
+              Amount Calculation
+            </div>
+            <p className="text-sm text-surface-600 bg-white p-3 rounded border border-surface-100 font-mono text-xs">
+              {analysis.amount_calculation}
+            </p>
           </div>
-          <p className="text-sm text-surface-600 bg-white p-3 rounded border border-surface-100 font-mono text-xs">
-            {analysis.amount_calculation}
-          </p>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -312,21 +326,27 @@ export function ResultDisplay({ response, query }: ResultDisplayProps) {
           {/* Conversational response - the main chat output */}
           <ConversationalResponse response={response} />
 
-          {/* Detailed analysis */}
+          {/* Detailed analysis (only if present) */}
           <AnalysisCard response={response} />
 
-          {/* Recommendations table */}
-          <div>
-            <h3 className="text-lg font-semibold text-surface-800 mb-3">
-              Recommendations
-            </h3>
-            <RecommendationsTable recommendations={response.recommendation.recommendations} />
-          </div>
+          {/* Recommendations table (only if recommendations exist) */}
+          {response.recommendation.recommendations && response.recommendation.recommendations.length > 0 && (
+            <div>
+              <h3 className="text-lg font-semibold text-surface-800 mb-3">
+                Recommendations
+              </h3>
+              <RecommendationsTable recommendations={response.recommendation.recommendations} />
+            </div>
+          )}
 
           <div className="text-sm text-surface-500 flex items-center gap-4 pt-2 border-t border-surface-200">
             <span>Validation attempts: {response.validation_attempts}</span>
-            <span>Web sources: {response.web_search.source_urls.length}</span>
-            <span>Funds found: {response.web_search.funds.length}</span>
+            {response.web_search && (
+              <>
+                <span>Web sources: {response.web_search.source_urls.length}</span>
+                <span>Funds found: {response.web_search.funds.length}</span>
+              </>
+            )}
           </div>
         </>
       )}

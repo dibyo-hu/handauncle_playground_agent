@@ -1,14 +1,16 @@
 /**
  * LAYER 0 - Query Classifier (LLM-based)
  *
- * Purpose: Classify if query is Indian finance related using LLM intelligence.
- * This is a gate-keeper layer - if classification fails, NO downstream processing occurs.
+ * Purpose: Classify query and determine processing requirements.
+ * This layer decides:
+ * 1. Is this an Indian finance query? (gate-keeper)
+ * 2. Does it need web search for real-time fund data?
+ * 3. Does it need specific recommendations (table)?
  *
  * Design decisions:
- * - Purely LLM-based classification (no keyword heuristics)
- * - LLM has better contextual understanding than keyword matching
+ * - Purely LLM-based classification
+ * - Smart routing - not all queries need web search or recommendations
  * - Uses gpt-4o-mini for cost efficiency
- * - Strict JSON output schema
  */
 
 import OpenAI from 'openai';
@@ -17,39 +19,56 @@ import { logger } from '../utils/logger';
 
 const CLASSIFICATION_SYSTEM_PROMPT = `You are a query classifier for an Indian personal finance recommendation system called "Handa Uncle".
 
-Your job is to determine if the user's query is something Handa Uncle can help with.
+Your job is to:
+1. Determine if the query is something Handa Uncle can help with
+2. Decide if web search is needed for real-time fund data
+3. Decide if specific fund/investment recommendations are needed
 
 **ACCEPT queries related to:**
-- Indian mutual funds (equity, debt, hybrid, liquid, index funds, ELSS)
-- SIP (Systematic Investment Plans) - starting, modifying, or stopping
-- Investment recommendations for Indian investors
-- Portfolio review and rebalancing
-- Tax-saving investments (Section 80C, ELSS)
-- Emergency fund planning
-- Goal-based investing (retirement, child education, home, etc.)
-- Asset allocation advice
-- Comparing funds or investment options
-- General personal finance questions in Indian context
-- Questions about expense ratios, NAV, returns, AUM
+- Indian mutual funds, SIPs, ELSS, index funds
+- Investment recommendations and portfolio advice
+- Tax-saving investments (Section 80C)
+- Emergency fund and goal-based investing
+- Asset allocation and rebalancing
+- General personal finance questions (Indian context)
 - FD, RD, PPF, EPF, NPS discussions
-- Insurance needs assessment (term, health)
+- Insurance needs assessment
 
 **REJECT queries about:**
-- Individual stock picking or equity trading tips
-- Cryptocurrency, Bitcoin, NFTs
-- Derivatives trading (options, futures, F&O)
-- Forex or currency trading
-- Non-Indian financial products (401k, IRA, etc.)
-- Get-rich-quick schemes or speculation
-- Completely unrelated topics (weather, recipes, movies, sports, etc.)
+- Individual stocks, crypto, derivatives, F&O
+- Non-Indian financial products (401k, IRA)
+- Unrelated topics (weather, recipes, sports)
 
-**IMPORTANT:** Be lenient and helpful. If the query is even tangentially related to personal finance or investing in the Indian context, accept it. Handa Uncle can gently redirect if needed.
+**WHEN TO SET needs_web_search = true:**
+- User asks for specific fund recommendations ("which fund should I invest in")
+- User wants current fund data, returns, expense ratios
+- Portfolio review needing current market data
+- Comparing specific funds
+
+**WHEN TO SET needs_web_search = false:**
+- General concepts ("what is SIP", "how does ELSS work")
+- Personal finance advice not needing specific funds
+- Questions about user's existing data/situation
+- Explaining financial concepts
+
+**WHEN TO SET needs_recommendations = true:**
+- User wants to know what to BUY, SELL, or HOLD
+- Portfolio rebalancing advice
+- Investment allocation suggestions
+- Specific fund recommendations
+
+**WHEN TO SET needs_recommendations = false:**
+- Conceptual/educational questions
+- General advice without specific action items
+- Questions about existing holdings (just analysis, no action)
 
 Output ONLY valid JSON:
 {
   "is_indian_finance": boolean,
   "confidence": number (0.0 to 1.0),
-  "reason": string (1-2 sentence explanation)
+  "reason": string (1-2 sentence explanation),
+  "needs_web_search": boolean,
+  "needs_recommendations": boolean
 }`;
 
 export async function classifyQuery(
@@ -60,13 +79,13 @@ export async function classifyQuery(
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini', // Fast and cheap for classification
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: CLASSIFICATION_SYSTEM_PROMPT },
         { role: 'user', content: query },
       ],
-      temperature: 0, // Deterministic
-      max_tokens: 200,
+      temperature: 0,
+      max_tokens: 250,
       response_format: { type: 'json_object' },
     });
 
@@ -85,12 +104,13 @@ export async function classifyQuery(
   } catch (error) {
     logger.error('LAYER-0:CLASSIFIER', 'Classification failed', { error });
 
-    // On error, be lenient - let the query through
-    // The recommendation layer can handle edge cases gracefully
+    // On error, be lenient and assume full processing needed
     return {
       is_indian_finance: true,
       confidence: 0.5,
-      reason: 'Classification error - allowing query to proceed for manual handling',
+      reason: 'Classification error - allowing query to proceed',
+      needs_web_search: true,
+      needs_recommendations: true,
     };
   }
 }

@@ -178,16 +178,26 @@ CRITICAL RULES:
 8. Be specific - don't be vague about numbers`;
 
 /**
- * Build the complete prompt for recommendation generation
+ * Build the complete prompt for response generation
  */
 function buildRecommendationPrompt(
   query: string,
   userContext: UserFinanceContext,
-  webSearchResult: WebSearchResult
+  webSearchResult: WebSearchResult | undefined,
+  needsRecommendations: boolean
 ): string {
   const contextSection = formatContextForLLM(userContext);
-  const searchSection = formatWebSearchForLLM(webSearchResult);
   const metrics = computeDerivedMetrics(userContext);
+
+  // Include web search data only if available
+  const searchSection = webSearchResult
+    ? formatWebSearchForLLM(webSearchResult)
+    : '<WEB_SEARCH_RESULTS>\nNo web search performed for this query.\n</WEB_SEARCH_RESULTS>';
+
+  // Different output format based on whether recommendations are needed
+  const outputInstructions = needsRecommendations
+    ? OUTPUT_FORMAT_INSTRUCTIONS
+    : OUTPUT_FORMAT_INSTRUCTIONS_SIMPLE;
 
   return `${contextSection}
 
@@ -195,9 +205,9 @@ ${searchSection}
 
 USER QUERY: "${query}"
 
-KEY NUMBERS FOR YOUR ANALYSIS (use these in your conversational response and calculations):
+KEY NUMBERS FOR YOUR RESPONSE:
 - Monthly surplus available for investment: ₹${metrics.monthly_surplus.toLocaleString('en-IN')}
-- Emergency fund gap: ₹${metrics.emergency_fund_gap.toLocaleString('en-IN')} ${metrics.emergency_fund_gap > 0 ? '⚠️ PRIORITY: Address this first with liquid funds!' : '✓ Covered'}
+- Emergency fund gap: ₹${metrics.emergency_fund_gap.toLocaleString('en-IN')} ${metrics.emergency_fund_gap > 0 ? '⚠️ PRIORITY' : '✓ Covered'}
 - Current portfolio value: ₹${metrics.total_current_value.toLocaleString('en-IN')}
 - Portfolio returns: ${metrics.return_percentage}%
 - Current asset allocation: Equity ${metrics.asset_allocation.equity_percentage}%, Debt ${metrics.asset_allocation.debt_percentage}%, Liquid ${metrics.asset_allocation.liquid_percentage}%
@@ -205,37 +215,64 @@ KEY NUMBERS FOR YOUR ANALYSIS (use these in your conversational response and cal
 - Investment horizon: ${userContext.investment_horizon_years} years
 - Dependents: ${userContext.dependents}
 
-ANALYSIS REQUIREMENTS:
-1. Start your conversational_response with "Welcome to the Machine." and reference their specific numbers
-2. Calculate exact amounts - show your math in the analysis.amount_calculation field
-3. Use ONLY funds from the web search results above - match names exactly
-4. Reference specific returns and expense ratios from search data
-5. If emergency fund gap exists, allocate to liquid funds first
+${needsRecommendations ? `RECOMMENDATION REQUIREMENTS:
+1. Start your conversational_response with "Welcome to the Machine."
+2. Calculate exact amounts - show your math in analysis.amount_calculation
+3. Use ONLY funds from web search results (if available)
+4. If emergency fund gap exists, prioritize liquid funds first` : `RESPONSE REQUIREMENTS:
+1. Start your conversational_response with "Welcome to the Machine."
+2. Provide helpful, conversational advice
+3. Reference the user's specific numbers where relevant
+4. NO recommendations array needed - just conversational guidance`}
 
-${OUTPUT_FORMAT_INSTRUCTIONS}
+${outputInstructions}
 
 Generate your response now. Output ONLY valid JSON.`;
 }
 
+// Simplified output format for non-recommendation queries
+const OUTPUT_FORMAT_INSTRUCTIONS_SIMPLE = `
+OUTPUT FORMAT (No recommendations needed):
+You MUST output ONLY valid JSON matching this schema:
+{
+  "conversational_response": "A friendly, helpful response to the user's question. Start with 'Welcome to the Machine.' Use your Handa Uncle style - warm, wise, practical. Reference their specific situation where relevant. End with the disclaimer.",
+
+  "context": {
+    "user_intent_summary": "Brief summary of what user is asking",
+    "query_type": "one of: portfolio_review, new_investment, rebalancing, redemption, tax_planning, emergency_fund, goal_based, general_advice"
+  },
+
+  "situation": {
+    "description": "Analysis of their situation relevant to the query",
+    "data_basis": "one of: user_data, hypothetical, mixed",
+    "scenario_type": "one of: data-backed, hypothetical, mixed"
+  }
+}
+
+NOTE: Do NOT include "analysis" or "recommendations" fields for this query type.
+Just provide a helpful conversational response.`;
+
 /**
- * Generate recommendations using LLM
+ * Generate response using LLM
  * Returns raw JSON string for validation in next layer
  */
 export async function generateRecommendation(
   openai: OpenAI,
   query: string,
   userContext: UserFinanceContext,
-  webSearchResult: WebSearchResult,
+  webSearchResult: WebSearchResult | undefined,
+  needsRecommendations: boolean,
   customSystemPrompt?: string
 ): Promise<{ raw: string; parsed: unknown }> {
-  logger.recommender('Starting recommendation generation', {
+  logger.recommender('Starting response generation', {
     query,
-    funds_available: webSearchResult.funds.length,
+    funds_available: webSearchResult?.funds.length ?? 0,
+    needs_recommendations: needsRecommendations,
     using_custom_prompt: !!customSystemPrompt,
   });
 
   const systemPrompt = customSystemPrompt || DEFAULT_SYSTEM_PROMPT;
-  const prompt = buildRecommendationPrompt(query, userContext, webSearchResult);
+  const prompt = buildRecommendationPrompt(query, userContext, webSearchResult, needsRecommendations);
 
   logger.recommender('Built prompt', { prompt_length: prompt.length });
 
@@ -269,24 +306,26 @@ export async function generateRecommendation(
 }
 
 /**
- * Retry recommendation with validation errors
+ * Retry response with validation errors
  * Used in the repair loop (Layer 4)
  */
 export async function retryRecommendation(
   openai: OpenAI,
   query: string,
   userContext: UserFinanceContext,
-  webSearchResult: WebSearchResult,
+  webSearchResult: WebSearchResult | undefined,
   previousOutput: string,
   validationErrors: string[],
+  needsRecommendations: boolean,
   customSystemPrompt?: string
 ): Promise<{ raw: string; parsed: unknown }> {
-  logger.recommender('Retrying recommendation with validation errors', {
+  logger.recommender('Retrying with validation errors', {
     error_count: validationErrors.length,
+    needs_recommendations: needsRecommendations,
   });
 
   const systemPrompt = customSystemPrompt || DEFAULT_SYSTEM_PROMPT;
-  const prompt = buildRecommendationPrompt(query, userContext, webSearchResult);
+  const prompt = buildRecommendationPrompt(query, userContext, webSearchResult, needsRecommendations);
 
   const retryPrompt = `${prompt}
 
@@ -300,7 +339,7 @@ Fix the JSON to address these validation errors. Keep the conversational tone bu
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4-turbo-preview',
+      model: 'gpt-4.1-2025-04-14',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: retryPrompt },

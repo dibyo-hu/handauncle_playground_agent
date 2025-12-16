@@ -66,9 +66,16 @@ function validateSchema(data: unknown): {
  */
 function validateBusinessRules(
   data: RecommendationOutput,
-  userContext: UserFinanceContext
+  userContext: UserFinanceContext,
+  needsRecommendations: boolean
 ): string[] {
   const errors: string[] = [];
+
+  // If no recommendations needed/provided, skip recommendation-specific validation
+  if (!needsRecommendations || !data.recommendations || data.recommendations.length === 0) {
+    return errors;
+  }
+
   const metrics = computeDerivedMetrics(userContext);
 
   // Calculate totals by action type
@@ -157,13 +164,14 @@ function validateBusinessRules(
  */
 export function validateRecommendation(
   data: unknown,
-  userContext: UserFinanceContext
+  userContext: UserFinanceContext,
+  needsRecommendations: boolean = true
 ): {
   valid: boolean;
   errors: string[];
   data?: RecommendationOutput;
 } {
-  logger.validator('Starting validation');
+  logger.validator('Starting validation', { needsRecommendations });
 
   // Step 1: Schema validation
   const schemaResult = validateSchema(data);
@@ -172,8 +180,8 @@ export function validateRecommendation(
     return schemaResult;
   }
 
-  // Step 2: Business rule validation
-  const businessErrors = validateBusinessRules(schemaResult.data!, userContext);
+  // Step 2: Business rule validation (conditional based on needsRecommendations)
+  const businessErrors = validateBusinessRules(schemaResult.data!, userContext, needsRecommendations);
   if (businessErrors.length > 0) {
     logger.validator('Business rule validation failed', { errors: businessErrors });
     return {
@@ -188,14 +196,15 @@ export function validateRecommendation(
 }
 
 /**
- * Generate and validate recommendation with repair loop
+ * Generate and validate response with repair loop
  * This is the main entry point for the validation layer
  */
 export async function generateValidatedRecommendation(
   openai: OpenAI,
   query: string,
   userContext: UserFinanceContext,
-  webSearchResult: WebSearchResult, // Now required - recommendations must be grounded
+  webSearchResult: WebSearchResult | undefined, // Optional - only for queries needing fund data
+  needsRecommendations: boolean, // Whether to generate BUY/SELL/HOLD table
   customSystemPrompt?: string
 ): Promise<{
   success: boolean;
@@ -203,7 +212,10 @@ export async function generateValidatedRecommendation(
   attempts: number;
   errors?: string[];
 }> {
-  logger.validator('Starting validated recommendation generation');
+  logger.validator('Starting validated response generation', {
+    has_web_search: !!webSearchResult,
+    needs_recommendations: needsRecommendations,
+  });
 
   let lastOutput = '';
   let lastErrors: string[] = [];
@@ -221,6 +233,7 @@ export async function generateValidatedRecommendation(
           query,
           userContext,
           webSearchResult,
+          needsRecommendations,
           customSystemPrompt
         );
       } else {
@@ -232,6 +245,7 @@ export async function generateValidatedRecommendation(
           webSearchResult,
           lastOutput,
           lastErrors,
+          needsRecommendations,
           customSystemPrompt
         );
       }
@@ -239,12 +253,12 @@ export async function generateValidatedRecommendation(
       lastOutput = result.raw;
 
       // Validate the output
-      const validation = validateRecommendation(result.parsed, userContext);
+      const validation = validateRecommendation(result.parsed, userContext, needsRecommendations);
 
       if (validation.valid) {
         logger.validator('Validation successful', {
           attempt: attempt + 1,
-          recommendations: validation.data!.recommendations.length,
+          recommendations: validation.data!.recommendations?.length ?? 0,
         });
 
         return {

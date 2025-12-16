@@ -7,6 +7,8 @@ export const ClassificationResultSchema = z.object({
   is_indian_finance: z.boolean(),
   confidence: z.number().min(0).max(1),
   reason: z.string(),
+  needs_web_search: z.boolean(), // Does query need real-time fund data?
+  needs_recommendations: z.boolean(), // Does query need specific buy/sell/hold advice?
 });
 
 export type ClassificationResult = z.infer<typeof ClassificationResultSchema>;
@@ -103,21 +105,21 @@ export const SituationSchema = z.object({
   scenario_type: z.enum(['data-backed', 'hypothetical', 'mixed']),
 });
 
-// Analysis for each recommendation
+// Analysis for each recommendation (optional for non-recommendation queries)
 export const RecommendationAnalysisSchema = z.object({
-  risk_assessment: z.string(),
-  expected_returns: z.string(),
-  allocation_reasoning: z.string(),
-  amount_calculation: z.string(),
-});
+  risk_assessment: z.string().optional(),
+  expected_returns: z.string().optional(),
+  allocation_reasoning: z.string().optional(),
+  amount_calculation: z.string().optional(),
+}).optional();
 
 export const RecommendationOutputSchema = z.object({
-  // Conversational response - friendly chat before the data
+  // Conversational response - friendly chat (always required)
   conversational_response: z.string(),
   context: ContextSummarySchema,
   situation: SituationSchema,
-  analysis: RecommendationAnalysisSchema,
-  recommendations: z.array(RecommendationItemSchema),
+  analysis: RecommendationAnalysisSchema, // Optional for non-recommendation queries
+  recommendations: z.array(RecommendationItemSchema).optional(), // Optional - only for buy/sell/hold queries
 });
 
 export type RecommendationOutput = z.infer<typeof RecommendationOutputSchema>;
@@ -146,7 +148,7 @@ export type RejectionResponse = z.infer<typeof RejectionResponseSchema>;
 export const SuccessResponseSchema = z.object({
   type: z.literal('success'),
   classification: ClassificationResultSchema,
-  web_search: WebSearchResultSchema, // Always required - recommendations must be grounded
+  web_search: WebSearchResultSchema.optional(), // Optional - only when web search was performed
   recommendation: RecommendationOutputSchema,
   validation_attempts: z.number(),
 });

@@ -5,10 +5,10 @@
  * This is the main entry point that ties all agentic layers together.
  *
  * Pipeline Flow:
- * 1. Layer 0: Classify query → Reject if not Indian finance
+ * 1. Layer 0: Classify query → Reject if not Indian finance, determine needs
  * 2. Layer 1: Inject user context
- * 3. Layer 2: ALWAYS perform web search for grounding (mandatory)
- * 4. Layer 3+4: Generate recommendations with validation loop
+ * 3. Layer 2: Web search (CONDITIONAL - only if classifier says needed)
+ * 4. Layer 3+4: Generate response with validation loop
  * 5. Return structured response
  */
 
@@ -27,7 +27,6 @@ import { logger } from '../utils/logger';
 
 export interface OrchestratorConfig {
   openai: OpenAI;
-  // Tavily removed - now using OpenAI native web search
 }
 
 /**
@@ -66,7 +65,11 @@ export async function processQuery(
       };
     }
 
-    logger.info('ORCHESTRATOR', 'Classification passed', classification);
+    logger.info('ORCHESTRATOR', 'Classification passed', {
+      ...classification,
+      needs_web_search: classification.needs_web_search,
+      needs_recommendations: classification.needs_recommendations,
+    });
 
     // ==========================================
     // LAYER 1: User Context Validation
@@ -90,68 +93,68 @@ export async function processQuery(
     logger.info('ORCHESTRATOR', 'Context validated successfully');
 
     // ==========================================
-    // LAYER 2: Web Search (MANDATORY for grounding)
+    // LAYER 2: Web Search (CONDITIONAL)
     // ==========================================
-    logger.info('ORCHESTRATOR', '>>> Entering Layer 2: Web Search (MANDATORY)');
+    let webSearchResult: WebSearchResult | undefined;
 
-    // Web search is ALWAYS performed - recommendations must be grounded in real data
-    // Uses OpenAI native web search (no Tavily)
-    const webSearchResult: WebSearchResult = await performWebSearch(
-      config.openai,
-      query
-    );
+    if (classification.needs_web_search) {
+      logger.info('ORCHESTRATOR', '>>> Entering Layer 2: Web Search');
 
-    logger.info('ORCHESTRATOR', 'Web search complete', {
-      funds_found: webSearchResult.funds.length,
-      sources: webSearchResult.source_urls.length,
-    });
+      webSearchResult = await performWebSearch(config.openai, query);
 
-    // Warn if no funds found but continue
-    if (webSearchResult.funds.length === 0) {
-      logger.warn('ORCHESTRATOR', 'Web search returned no funds - recommendations may be limited');
+      logger.info('ORCHESTRATOR', 'Web search complete', {
+        funds_found: webSearchResult.funds.length,
+        sources: webSearchResult.source_urls.length,
+      });
+    } else {
+      logger.info('ORCHESTRATOR', '>>> Skipping Layer 2: Web Search not needed');
     }
 
     // ==========================================
-    // LAYER 3+4: Recommendation + Validation
+    // LAYER 3+4: Response Generation + Validation
     // ==========================================
-    logger.info('ORCHESTRATOR', '>>> Entering Layer 3+4: Recommendation + Validation');
+    logger.info('ORCHESTRATOR', '>>> Entering Layer 3+4: Response Generation', {
+      needs_recommendations: classification.needs_recommendations,
+    });
 
     const recommendationResult = await generateValidatedRecommendation(
       config.openai,
       query,
       contextValidation.context,
-      webSearchResult,
+      webSearchResult, // Can be undefined now
+      classification.needs_recommendations,
       customSystemPrompt
     );
 
     if (!recommendationResult.success) {
-      logger.error('ORCHESTRATOR', 'Recommendation generation failed', {
+      logger.error('ORCHESTRATOR', 'Response generation failed', {
         attempts: recommendationResult.attempts,
         errors: recommendationResult.errors,
       });
 
       return {
         type: 'error',
-        error: 'Failed to generate valid recommendations after multiple attempts',
+        error: 'Failed to generate valid response after multiple attempts',
         layer: 'LAYER-4:VALIDATOR',
         details: recommendationResult.errors,
       };
     }
 
     // ==========================================
-    // SUCCESS: Return full response
+    // SUCCESS: Return response
     // ==========================================
     const elapsed = Date.now() - startTime;
     logger.info('ORCHESTRATOR', 'Query processing complete', {
       elapsed_ms: elapsed,
-      recommendations_count: recommendationResult.data!.recommendations.length,
+      recommendations_count: recommendationResult.data!.recommendations?.length ?? 0,
       validation_attempts: recommendationResult.attempts,
+      had_web_search: !!webSearchResult,
     });
 
     return {
       type: 'success',
       classification,
-      web_search: webSearchResult, // Always included now
+      web_search: webSearchResult, // Can be undefined now
       recommendation: recommendationResult.data!,
       validation_attempts: recommendationResult.attempts,
     };

@@ -22,6 +22,8 @@ export interface ClassificationResult {
   is_indian_finance: boolean;
   confidence: number;
   reason: string;
+  needs_web_search: boolean;
+  needs_recommendations: boolean;
 }
 
 export interface FundData {
@@ -69,18 +71,18 @@ export interface Situation {
 }
 
 export interface RecommendationAnalysis {
-  risk_assessment: string;
-  expected_returns: string;
-  allocation_reasoning: string;
-  amount_calculation: string;
+  risk_assessment?: string;
+  expected_returns?: string;
+  allocation_reasoning?: string;
+  amount_calculation?: string;
 }
 
 export interface RecommendationOutput {
   conversational_response: string;
   context: ContextSummary;
   situation: Situation;
-  analysis: RecommendationAnalysis;
-  recommendations: RecommendationItem[];
+  analysis?: RecommendationAnalysis; // Optional for non-recommendation queries
+  recommendations?: RecommendationItem[]; // Optional for non-recommendation queries
 }
 
 export interface RejectionResponse {
@@ -92,7 +94,7 @@ export interface RejectionResponse {
 export interface SuccessResponse {
   type: 'success';
   classification: ClassificationResult;
-  web_search: WebSearchResult; // Now always required
+  web_search?: WebSearchResult; // Optional - only when web search was performed
   recommendation: RecommendationOutput;
   validation_attempts: number;
 }
