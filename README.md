@@ -1,8 +1,89 @@
 # Agentic Finance Playground
 
-A local, experiment-driven agentic system for Indian personal finance recommendations. This is NOT a chatbot - it's a controlled decision engine with strict schemas, grounded web search, and tweakable user context.
+A local, experiment-driven agentic system with two modes:
+1. **Finance Advisor** - A controlled decision engine for Indian personal finance recommendations with strict schemas and validation
+2. **Tool Playground** - An unconstrained chat interface for testing and building custom agents
+
+---
+
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Project Structure](#project-structure)
+- [Backend Guide](#backend-guide)
+- [Frontend Guide](#frontend-guide)
+- [API Reference](#api-reference)
+- [SSE Streaming Protocol](#sse-streaming-protocol)
+- [Environment Variables](#environment-variables)
+- [Development Workflow](#development-workflow)
+- [Troubleshooting](#troubleshooting)
+
+---
+
+## Quick Start
+
+### Prerequisites
+- Node.js 18+
+- npm
+- OpenAI API key
+
+### 1. Setup Backend
+
+```bash
+cd backend
+npm install
+cp .env.example .env
+# Edit .env and add: OPENAI_API_KEY=sk-your-key-here
+npm run dev
+```
+
+Backend runs at: **http://localhost:3001**
+
+### 2. Setup Frontend (new terminal)
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend runs at: **http://localhost:3000**
+
+### 3. Open Browser
+
+Navigate to http://localhost:3000 and you'll see two tabs:
+- **Finance Advisor** - Indian personal finance recommendations
+- **Tool Playground** - Unconstrained chat for agent development
+
+---
+
+## Overview
+
+### Finance Advisor Tab
+
+A structured recommendation engine with:
+- **Query Classification** - Filters non-Indian finance queries
+- **User Context Injection** - Financial data drives recommendations
+- **Web Search Grounding** - Real-time fund data (optional)
+- **Schema Validation** - Strict output format enforcement
+- **Business Rule Validation** - No stocks, crypto, or derivatives
+
+### Tool Playground Tab
+
+An unconstrained chat interface with:
+- **Model Selection** - Choose GPT-4o, GPT-4o Mini, GPT-4 Turbo, or GPT-3.5 Turbo
+- **Temperature Control** - Adjust creativity (0-2)
+- **Conversation Management** - Create, switch, and delete conversations
+- **SSE Streaming** - Real-time response streaming
+- **No Constraints** - No validation or business rules
+
+---
 
 ## Architecture
+
+### Finance Advisor Pipeline
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -11,7 +92,7 @@ A local, experiment-driven agentic system for Indian personal finance recommenda
 │  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐           │
 │  │   LAYER 0   │   │   LAYER 1   │   │   LAYER 2   │           │
 │  │  Classifier │──▶│   Context   │──▶│  Web Search │           │
-│  │  (GPT-4.1)  │   │  Injection  │   │    OpenAI   │           │
+│  │  (GPT-4o-m) │   │  Injection  │   │    OpenAI   │           │
 │  └─────────────┘   └─────────────┘   └─────────────┘           │
 │         │                                    │                 │
 │         │ REJECT if not                     │                  │
@@ -26,48 +107,35 @@ A local, experiment-driven agentic system for Indian personal finance recommenda
 │                                             ▼                  │
 │                                    ┌─────────────────┐         │
 │                                    │ RECOMMENDATIONS │         │
-│                                    │    (JSON)       │         │
+│                                    │    (SSE JSON)   │         │
 │                                    └─────────────────┘         │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Layers Explained
+### Tool Playground Architecture
 
-### Layer 0 - Query Classifier (`classifier.ts`)
-- **Purpose**: Fast, cheap gate-keeper to filter non-Indian finance queries
-- **Model**: GPT-4o-mini for speed and cost efficiency
-- **Behavior**: If query is NOT Indian finance related, immediately returns rejection without running subsequent layers
-- **Heuristics**: Uses keyword matching for fast classification before LLM fallback
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     CHAT API v1                                 │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │                    /v1/chat                              │   │
+│  │                                                          │   │
+│  │  ┌──────────────┐    ┌──────────────┐    ┌───────────┐  │   │
+│  │  │   Request    │───▶│   OpenAI     │───▶│    SSE    │  │   │
+│  │  │   Handler    │    │   Streaming  │    │  Response │  │   │
+│  │  └──────────────┘    └──────────────┘    └───────────┘  │   │
+│  │         │                                      │         │   │
+│  │         │            ┌──────────────┐         │         │   │
+│  │         └───────────▶│ Conversation │◀────────┘         │   │
+│  │                      │   Storage    │                   │   │
+│  │                      │  (In-Memory) │                   │   │
+│  │                      └──────────────┘                   │   │
+│  └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-### Layer 1 - User Context (`context.ts`)
-- **Purpose**: Single source of truth for user financial data
-- **Design**: Structured JSON schema with real Indian mutual fund data
-- **Features**: Computes derived metrics (surplus, emergency fund gap, asset allocation)
-- **Important**: Context is injected as structured data, NOT merged textually into prompts
-
-### Layer 2 - Web Search (`webSearch.ts`)
-- **Purpose**: Ground recommendations with real-time fund data
-- **Trigger**: Conditional - only runs when recommending new instruments
-- **API**: Uses Tavily for web search
-- **Output**: Extracts structured fund facts (returns, expense ratio, AUM)
-- **Caching**: 30-minute cache to avoid redundant searches
-
-### Layer 3 - Recommendation Engine (`recommender.ts`)
-- **Purpose**: Generate schema-validated investment recommendations
-- **Model**: GPT-4o for high-quality recommendations
-- **Constraints**:
-  - Only mutual funds, index funds, debt funds, liquid funds, ELSS
-  - NO stocks, crypto, derivatives
-  - Total amount ≤ monthly surplus
-
-### Layer 4 - Validator (`validator.ts`)
-- **Purpose**: Ensure LLM output conforms to schema and business rules
-- **Repair Loop**: Retries up to 2 times if validation fails
-- **Validations**:
-  - JSON schema validation (Zod)
-  - Numeric constraints (amounts ≤ surplus)
-  - Forbidden instrument check
-  - Execution always disabled
+---
 
 ## Project Structure
 
@@ -75,109 +143,187 @@ A local, experiment-driven agentic system for Indian personal finance recommenda
 agentic-playground/
 ├── backend/
 │   ├── src/
-│   │   ├── layers/
-│   │   │   ├── classifier.ts     # Layer 0: Query classification
-│   │   │   ├── context.ts        # Layer 1: User context management
-│   │   │   ├── webSearch.ts      # Layer 2: Grounded web search
-│   │   │   ├── recommender.ts    # Layer 3: LLM recommendations
-│   │   │   ├── validator.ts      # Layer 4: Validation + repair
-│   │   │   └── orchestrator.ts   # Pipeline coordinator
-│   │   ├── types/
-│   │   │   └── schemas.ts        # Zod schemas for all data
-│   │   ├── routes/
-│   │   │   └── api.ts            # REST API endpoints
-│   │   ├── utils/
-│   │   │   └── logger.ts         # Structured logging
-│   │   └── server.ts             # Express server entry
+│   │   │
+│   │   │── controllers/           # HTTP request handlers
+│   │   │   └── chat.controller.ts # Chat API v1 handlers
+│   │   │
+│   │   │── interfaces/            # TypeScript type definitions
+│   │   │   └── chat.interface.ts  # Chat API types & SSE events
+│   │   │
+│   │   │── layers/                # Finance Advisor pipeline
+│   │   │   ├── classifier.ts      # Layer 0: Query classification
+│   │   │   ├── context.ts         # Layer 1: User context
+│   │   │   ├── webSearch.ts       # Layer 2: Web search
+│   │   │   ├── recommender.ts     # Layer 3: Recommendations
+│   │   │   ├── streamingRecommender.ts  # Layer 3: SSE streaming
+│   │   │   ├── validator.ts       # Layer 4: Validation
+│   │   │   ├── orchestrator.ts    # Pipeline coordinator
+│   │   │   ├── streamingOrchestrator.ts # SSE pipeline
+│   │   │   ├── freeChat.ts        # Unconstrained chat mode
+│   │   │   └── index.ts           # Exports
+│   │   │
+│   │   │── lib/                   # Shared libraries
+│   │   │   ├── chat.lib.ts        # OpenAI API wrapper
+│   │   │   └── stream.lib.ts      # SSE stream utilities
+│   │   │
+│   │   │── routes/                # Express route definitions
+│   │   │   ├── api.ts             # Finance Advisor routes (/api)
+│   │   │   └── v1/
+│   │   │       ├── index.ts       # V1 router mount
+│   │   │       └── chat.route.ts  # Chat API routes (/v1/chat)
+│   │   │
+│   │   │── services/              # Business logic
+│   │   │   └── chat.service.ts    # Chat processing & storage
+│   │   │
+│   │   │── types/
+│   │   │   └── schemas.ts         # Zod schemas for validation
+│   │   │
+│   │   │── utils/
+│   │   │   ├── logger.ts          # Structured logging
+│   │   │   ├── event.util.ts      # SSE event builders
+│   │   │   └── message.util.ts    # Message transformers
+│   │   │
+│   │   └── server.ts              # Express server entry point
+│   │
 │   ├── package.json
 │   ├── tsconfig.json
 │   └── .env.example
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── components/
-│   │   │   ├── ContextEditor.tsx   # JSON editor for user context
-│   │   │   ├── QueryInput.tsx      # Query input with examples
-│   │   │   └── ResultDisplay.tsx   # Recommendations table + metadata
-│   │   ├── lib/
-│   │   │   └── api.ts              # API client
-│   │   ├── types/
-│   │   │   └── index.ts            # TypeScript types
-│   │   ├── App.tsx                 # Main application
-│   │   ├── main.tsx                # Entry point
-│   │   └── index.css               # Tailwind styles
+│   │   │── components/
+│   │   │   ├── ChatInput.tsx        # Message input component
+│   │   │   ├── ChatMessage.tsx      # Message display component
+│   │   │   ├── ContextEditor.tsx    # User context JSON editor
+│   │   │   ├── OutputFormatEditor.tsx # Output format settings
+│   │   │   ├── PlaygroundSidebar.tsx  # Tool Playground sidebar
+│   │   │   ├── QueryInput.tsx       # Finance Advisor query input
+│   │   │   ├── ResultDisplay.tsx    # Recommendation results
+│   │   │   ├── Sidebar.tsx          # Finance Advisor sidebar
+│   │   │   ├── SystemPromptEditor.tsx # System prompt settings
+│   │   │   ├── TabSwitcher.tsx      # Tab navigation component
+│   │   │   └── index.ts             # Exports
+│   │   │
+│   │   │── lib/
+│   │   │   ├── api.ts               # API client functions
+│   │   │   ├── theme-context.tsx    # Dark/light mode context
+│   │   │   ├── utils.ts             # Utility functions (cn)
+│   │   │   └── hooks/
+│   │   │       └── use-streaming-chat.ts  # Streaming hook
+│   │   │
+│   │   │── types/
+│   │   │   └── index.ts             # TypeScript types
+│   │   │
+│   │   ├── App.tsx                  # Main application component
+│   │   ├── main.tsx                 # React entry point
+│   │   └── index.css                # Tailwind styles
+│   │
 │   ├── package.json
-│   ├── vite.config.ts
+│   ├── vite.config.ts               # Vite + proxy config
 │   └── tailwind.config.js
 │
 └── README.md
 ```
 
-## Setup & Run Instructions
+---
 
-### Prerequisites
-- Node.js 18+
-- npm or yarn
-- OpenAI API key
-- Tavily API key (optional, for web search grounding)
+## Backend Guide
 
-### 1. Clone and navigate
-```bash
-cd agentic-playground
+### Key Files Explained
+
+#### `server.ts` - Entry Point
+- Creates Express app
+- Configures CORS for frontend origins
+- Mounts `/api` routes (Finance Advisor)
+- Mounts `/v1` routes (Tool Playground)
+
+#### `layers/` - Finance Advisor Pipeline
+
+| File | Purpose | Model |
+|------|---------|-------|
+| `classifier.ts` | Filters non-Indian finance queries | GPT-4o-mini |
+| `context.ts` | Manages user financial data | - |
+| `webSearch.ts` | Grounds recommendations with web data | OpenAI |
+| `recommender.ts` | Generates investment suggestions | GPT-4o |
+| `validator.ts` | Enforces schema + business rules | - |
+| `orchestrator.ts` | Coordinates all layers | - |
+
+#### `services/chat.service.ts` - Tool Playground Logic
+
+```typescript
+// Key functions:
+processChatStreaming()    // SSE streaming chat
+processChatNonStreaming() // JSON response chat
+getConversation()         // Fetch conversation
+listConversations()       // List all conversations
+deleteConversation()      // Delete conversation
 ```
 
-### 2. Backend Setup
-```bash
-cd backend
+Conversations are stored **in-memory** using a `Map<string, Conversation>`.
 
-# Install dependencies
-npm install
+#### `lib/stream.lib.ts` - SSE Utilities
 
-# Create environment file
-cp .env.example .env
-
-# Edit .env and add your API keys:
-# OPENAI_API_KEY=sk-your-key-here
-# TAVILY_API_KEY=tvly-your-key-here  (optional)
-
-# Start development server
-npm run dev
+```typescript
+// SSE helper functions:
+setupSSEResponse(res)     // Configure response headers
+sendSSEEvent(res, event)  // Send formatted SSE event
+closeSSEConnection(res)   // End stream
+StreamContextManager      // Track message IDs, sequences, blocks
 ```
 
-Backend runs at: http://localhost:3001
+---
 
-### 3. Frontend Setup (new terminal)
-```bash
-cd frontend
+## Frontend Guide
 
-# Install dependencies
-npm install
+### Key Files Explained
 
-# Start development server
-npm run dev
+#### `App.tsx` - Main Application
+
+Manages two modes with a tab switcher:
+- **Finance Advisor**: Uses `/api/recommend/stream` with user context
+- **Tool Playground**: Uses `/v1/chat` with conversation management
+
+```typescript
+// State for Tool Playground:
+const [conversationId, setConversationId] = useState<string | null>(null);
+const [conversations, setConversations] = useState<ConversationItem[]>([]);
+const [playgroundModel, setPlaygroundModel] = useState<string>('gpt-4o');
+const [playgroundTemperature, setPlaygroundTemperature] = useState<number>(1);
 ```
 
-Frontend runs at: http://localhost:3000
+#### `PlaygroundSidebar.tsx` - Tool Playground Controls
 
-### 4. Using the Playground
+Features:
+- New Chat button
+- Model dropdown (GPT-4o, GPT-4o Mini, GPT-4 Turbo, GPT-3.5 Turbo)
+- Temperature slider (0-2)
+- Conversation list with delete
+- Theme switcher
 
-1. **View Default Context**: The left panel shows default user financial data with real Indian mutual funds
-2. **Edit Context**: Modify the JSON to change income, expenses, holdings, risk profile, etc.
-3. **Submit Query**: Ask questions about Indian mutual funds, SIPs, portfolio allocation
-4. **View Results**: See classification, situation analysis, and recommendations table
-5. **Experiment**: Modify context and replay the same query to observe behavioral changes
+#### `vite.config.ts` - Proxy Configuration
 
-## API Endpoints
+```typescript
+proxy: {
+  '/api': { target: 'http://localhost:3001', changeOrigin: true },
+  '/v1': { target: 'http://localhost:3001', changeOrigin: true },
+}
+```
+
+---
+
+## API Reference
+
+### Finance Advisor API (`/api`)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/health` | Health check |
 | GET | `/api/default-context` | Get default user context |
-| POST | `/api/recommend` | Submit query for recommendations |
+| GET | `/api/default-prompt` | Get default system prompt |
+| POST | `/api/recommend/stream` | Process query (SSE streaming) |
 | GET | `/api/logs` | View debug logs |
-| DELETE | `/api/logs` | Clear log buffer |
 
-### POST /api/recommend
+#### POST /api/recommend/stream
 
 **Request:**
 ```json
@@ -187,130 +333,337 @@ Frontend runs at: http://localhost:3000
     "monthly_income": 150000,
     "monthly_expenses": 80000,
     "bank_balance": 500000,
-    "mutual_fund_holdings": [...],
+    "mutual_fund_holdings": [],
     "risk_profile": "moderate",
-    "investment_horizon_years": 10,
-    "dependents": 2,
-    "emergency_fund_months": 6
+    "investment_horizon_years": 10
   }
 }
 ```
 
-**Success Response:**
+**Response:** SSE stream with events:
+- `classification` - Query classification result
+- `web_search` - Web search results (if triggered)
+- `recommendation_chunk` - Streaming text chunks
+- `recommendation` - Final structured recommendation
+- `error` - Error details
+
+---
+
+### Tool Playground Chat API (`/v1`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/v1/chat` | Send message (auto-creates conversation) |
+| GET | `/v1/chat/conversations` | List all conversations |
+| GET | `/v1/chat/conversations/:id` | Get specific conversation |
+| DELETE | `/v1/chat/conversations/:id` | Delete conversation |
+
+#### POST /v1/chat
+
+**Headers:**
+| Header | Required | Description |
+|--------|----------|-------------|
+| `X-Conversation-Id` | No | Existing conversation ID (omit for new) |
+| `X-Stream` | No | `true` (default) or `false` |
+
+**Request:**
 ```json
 {
-  "type": "success",
-  "classification": {
-    "is_indian_finance": true,
-    "confidence": 0.95,
-    "reason": "Query about mutual fund SIP"
-  },
-  "web_search": {
-    "query": "best mutual fund India 2024...",
-    "funds": [...],
-    "search_timestamp": "2024-...",
-    "source_urls": [...]
-  },
-  "recommendation": {
-    "context": {
-      "user_intent_summary": "User wants to start a SIP...",
-      "query_type": "new_investment"
-    },
-    "situation": {
-      "description": "Based on your moderate risk profile...",
-      "data_basis": "user_data",
-      "scenario_type": "data-backed"
-    },
-    "recommendations": [
-      {
-        "instrument": {
-          "name": "Parag Parikh Flexi Cap Fund",
-          "category": "mutual_fund"
-        },
-        "action": "BUY",
-        "rationale": "Diversified flexi cap with strong track record...",
-        "amount": 20000,
-        "execution": {
-          "enabled": false,
-          "label": "Execute (Coming Soon)"
+  "message": "Hello, how are you?",
+  "model": "gpt-4o",
+  "temperature": 1,
+  "maxTokens": 4096
+}
+```
+
+**Response Headers:**
+| Header | Description |
+|--------|-------------|
+| `X-Conversation-Id` | The conversation ID |
+| `X-Is-New-Conversation` | `true` if newly created |
+| `X-Conversation-Title` | Auto-generated title |
+
+**SSE Response:** See [SSE Streaming Protocol](#sse-streaming-protocol)
+
+**Non-Streaming Response (X-Stream: false):**
+```json
+{
+  "id": "msg_abc123",
+  "conversationId": "conv_xyz789",
+  "role": "assistant",
+  "content": "Hello! I'm doing well, thank you...",
+  "timestamp": "2024-01-15T10:30:00.000Z"
+}
+```
+
+#### GET /v1/chat/conversations
+
+**Response:**
+```json
+{
+  "conversations": [
+    {
+      "id": "conv_xyz789",
+      "title": "Hello conversation",
+      "messageCount": 4,
+      "createdAt": "2024-01-15T10:00:00.000Z",
+      "updatedAt": "2024-01-15T10:30:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+## SSE Streaming Protocol
+
+### Event Format
+
+```
+event: <event_type>
+data: <json_payload>
+
+```
+
+### Event Types
+
+| Event | Description | When Sent |
+|-------|-------------|-----------|
+| `message.started` | Stream begins | First event |
+| `text.block.started` | Text block begins | Before text |
+| `text.delta` | Text chunk | During streaming |
+| `text.block.completed` | Text block ends | After all text |
+| `conversation.info` | Conversation metadata | After message.started |
+| `message.completed` | Stream ends successfully | Last event |
+| `message.failed` | Error occurred | On error |
+| `stream.end` | Connection closing | Final event |
+
+### Event Payloads
+
+#### message.started
+```json
+{
+  "type": "message.started",
+  "messageId": "msg_abc123",
+  "sequence": 0,
+  "payload": {
+    "role": "assistant"
+  }
+}
+```
+
+#### text.delta
+```json
+{
+  "type": "text.delta",
+  "messageId": "msg_abc123",
+  "sequence": 2,
+  "payload": {
+    "text": "Hello",
+    "blockId": "block_xyz"
+  }
+}
+```
+
+#### conversation.info
+```json
+{
+  "type": "conversation.info",
+  "messageId": "msg_abc123",
+  "sequence": 1,
+  "payload": {
+    "conversationId": "conv_xyz789",
+    "isNewConversation": true,
+    "conversationTitle": "Hello conversation"
+  }
+}
+```
+
+### JavaScript Client Example
+
+```javascript
+async function chat(message, conversationId = null) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Stream': 'true',
+  };
+
+  if (conversationId) {
+    headers['X-Conversation-Id'] = conversationId;
+  }
+
+  const response = await fetch('/v1/chat', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ message, model: 'gpt-4o', temperature: 1 }),
+  });
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let newConversationId = response.headers.get('X-Conversation-Id');
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    let eventType = '';
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        eventType = line.slice(7);
+      } else if (line.startsWith('data: ') && eventType) {
+        const data = JSON.parse(line.slice(6));
+
+        if (data.type === 'text.delta') {
+          process.stdout.write(data.payload.text);
         }
+
+        eventType = '';
       }
-    ]
-  },
-  "validation_attempts": 1
+    }
+  }
+
+  return newConversationId;
 }
 ```
 
-**Rejection Response:**
-```json
-{
-  "type": "rejection",
-  "classification": {
-    "is_indian_finance": false,
-    "confidence": 0.9,
-    "reason": "Query about cryptocurrency is outside scope"
-  },
-  "message": "I can only help with Indian personal finance topics..."
-}
-```
-
-## Hard Constraints
-
-These constraints are **enforced in code**:
-
-- **NO individual stocks** - Mutual funds only
-- **NO cryptocurrency**
-- **NO derivatives** (options, futures, F&O)
-- **Allowed instruments**: Mutual funds, Index funds, Debt funds, Liquid funds, ELSS
-- **Amount constraint**: Sum of all recommendation amounts ≤ monthly surplus
-- **Execution disabled**: All execute buttons are disabled
-
-## Experiment Support
-
-This system is designed for **behavior experimentation**:
-
-1. **Same Query, Different Context**: Submit a query, modify user context, replay to observe how recommendations change
-2. **Risk Profile Testing**: Change risk_profile from "low" to "high" and see allocation shifts
-3. **Income/Expense Variations**: Modify monthly_surplus to see amount constraints in action
-4. **Holdings Impact**: Add/remove funds from portfolio to see rebalancing suggestions
-
-## Debugging
-
-### View Logs
-```bash
-curl http://localhost:3001/api/logs
-```
-
-### Log Levels
-- Each layer logs its inputs/outputs
-- Errors include layer identification
-- Validation failures show specific constraint violations
+---
 
 ## Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENAI_API_KEY` | Yes | OpenAI API key for GPT-4o and GPT-4o-mini |
-| `TAVILY_API_KEY` | No | Tavily API key for web search (recommendations will work without, but won't be grounded) |
-| `PORT` | No | Backend port (default: 3001) |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `OPENAI_API_KEY` | Yes | - | OpenAI API key |
+| `PORT` | No | 3001 | Backend server port |
+
+### .env.example
+
+```bash
+# Required
+OPENAI_API_KEY=sk-your-key-here
+
+# Optional
+PORT=3001
+```
+
+---
+
+## Development Workflow
+
+### Running in Development
+
+```bash
+# Terminal 1 - Backend with hot reload
+cd backend
+npm run dev
+
+# Terminal 2 - Frontend with hot reload
+cd frontend
+npm run dev
+```
+
+### Type Checking
+
+```bash
+# Backend
+cd backend
+npx tsc --noEmit
+
+# Frontend
+cd frontend
+npx tsc --noEmit
+```
+
+### Adding New Features
+
+#### Adding a New Chat API Endpoint
+
+1. Define types in `backend/src/interfaces/chat.interface.ts`
+2. Add business logic in `backend/src/services/chat.service.ts`
+3. Create handler in `backend/src/controllers/chat.controller.ts`
+4. Register route in `backend/src/routes/v1/chat.route.ts`
+
+#### Adding a New Finance Advisor Layer
+
+1. Create layer in `backend/src/layers/yourLayer.ts`
+2. Export from `backend/src/layers/index.ts`
+3. Integrate in `backend/src/layers/orchestrator.ts`
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+#### "OPENAI_API_KEY environment variable is required"
+- Create `.env` file in `backend/` directory
+- Add `OPENAI_API_KEY=sk-your-key-here`
+
+#### CORS Errors
+- Ensure backend is running on port 3001
+- Ensure frontend is running on port 3000 or 5173
+- Check `server.ts` CORS configuration
+
+#### SSE Events Not Parsing
+- Ensure proper `\n\n` between events
+- Check for `event:` and `data:` prefixes
+- Buffer incomplete chunks until `\n\n` received
+
+#### Conversations Not Persisting
+- Conversations are stored **in-memory**
+- Restarting backend clears all conversations
+- For persistence, implement database storage in `chat.service.ts`
+
+### Debug Logs
+
+```bash
+# View Finance Advisor logs
+curl http://localhost:3001/api/logs
+
+# Clear logs
+curl -X DELETE http://localhost:3001/api/logs
+```
+
+---
 
 ## Tech Stack
 
 ### Backend
-- Node.js / TypeScript
-- Express.js
-- OpenAI SDK
-- Zod (schema validation)
+- **Runtime**: Node.js 18+
+- **Language**: TypeScript
+- **Framework**: Express.js
+- **AI**: OpenAI SDK
+- **Validation**: Zod
 
 ### Frontend
-- React 18 / TypeScript
-- Vite
-- Tailwind CSS
-- Lucide React (icons)
+- **Framework**: React 18
+- **Build Tool**: Vite
+- **Styling**: Tailwind CSS
+- **Icons**: Lucide React
+- **Language**: TypeScript
 
-## Notes
+---
 
-- This is a **behavior experimentation tool**, not a production system
-- Execute buttons are intentionally disabled
-- Web search is optional but recommended for grounded recommendations
-- All fund names in default context are real Indian mutual funds
+## Hard Constraints (Finance Advisor Only)
+
+These constraints are **enforced in code** for the Finance Advisor tab:
+
+- **NO individual stocks** - Mutual funds only
+- **NO cryptocurrency**
+- **NO derivatives** (options, futures, F&O)
+- **NO PMS, AIF, ULIP**
+- **Allowed instruments**: Mutual funds, Index funds, Debt funds, Liquid funds, ELSS
+- **Amount constraint**: Sum of all recommendation amounts ≤ monthly surplus
+- **Execution disabled**: All execute buttons are disabled
+
+The Tool Playground tab has **no constraints**.
+
+---
+
+## License
+
+This is an internal experimentation tool. Not for production use.
