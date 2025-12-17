@@ -1,5 +1,7 @@
-export { ContextEditor } from './ContextEditor';
-export { SystemPromptEditor } from './SystemPromptEditor';
-export { OutputFormatEditor } from './OutputFormatEditor';
-export { QueryInput } from './QueryInput';
-export { ResultDisplay } from './ResultDisplay';
+// New chat UI components
+export { Sidebar } from './Sidebar';
+export { PlaygroundSidebar } from './PlaygroundSidebar';
+export { TabSwitcher } from './TabSwitcher';
+export type { TabMode } from './TabSwitcher';
+export { ChatMessage } from './ChatMessage';
+export { ChatInput } from './ChatInput';

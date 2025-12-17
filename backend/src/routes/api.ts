@@ -6,11 +6,21 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { z } from 'zod';
 import { PlaygroundRequestSchema } from '../types/schemas';
 import { DEFAULT_USER_CONTEXT, computeDerivedMetrics } from '../layers/context';
 import { processQuery, OrchestratorConfig } from '../layers/orchestrator';
+import { processQueryStreaming, StreamingOrchestratorConfig } from '../layers/streamingOrchestrator';
+import { processFreeChat, DEFAULT_FREE_CHAT_PROMPT, FreeChatConfig } from '../layers/freeChat';
 import { DEFAULT_SYSTEM_PROMPT, DEFAULT_OUTPUT_FORMAT_INSTRUCTIONS } from '../layers/recommender';
 import { logger } from '../utils/logger';
+
+// Schema for free chat requests
+const FreeChatRequestSchema = z.object({
+  query: z.string().min(1),
+  system_prompt: z.string().optional(),
+  context: z.string().optional(),
+});
 
 export function createApiRouter(config: OrchestratorConfig): Router {
   const router = Router();
@@ -56,6 +66,90 @@ export function createApiRouter(config: OrchestratorConfig): Router {
     res.json({
       output_format: DEFAULT_OUTPUT_FORMAT_INSTRUCTIONS,
     });
+  });
+
+  /**
+   * GET /api/free-chat/default-prompt
+   * Returns the default system prompt for free chat mode
+   */
+  router.get('/free-chat/default-prompt', (_req: Request, res: Response) => {
+    res.json({
+      system_prompt: DEFAULT_FREE_CHAT_PROMPT,
+    });
+  });
+
+  /**
+   * POST /api/free-chat/stream
+   * Free-form chat endpoint without finance constraints (SSE streaming)
+   *
+   * Request body:
+   * {
+   *   "query": string,
+   *   "system_prompt": string (optional),
+   *   "context": string (optional)
+   * }
+   */
+  router.post('/free-chat/stream', async (req: Request, res: Response) => {
+    try {
+      logger.info('API', 'Received free chat request', {
+        body_size: JSON.stringify(req.body).length,
+      });
+
+      // Validate request body
+      const parseResult = FreeChatRequestSchema.safeParse(req.body);
+
+      if (!parseResult.success) {
+        logger.warn('API', 'Invalid free chat request body', {
+          errors: parseResult.error.errors,
+        });
+
+        return res.status(400).json({
+          type: 'error',
+          error: 'Invalid request body',
+          details: parseResult.error.errors.map((e) => ({
+            path: e.path.join('.'),
+            message: e.message,
+          })),
+        });
+      }
+
+      const { query, system_prompt, context } = parseResult.data;
+
+      // Set up SSE headers
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+
+      // Cast config for free chat
+      const freeChatConfig: FreeChatConfig = {
+        openai: config.openai,
+      };
+
+      // Process free chat
+      await processFreeChat(
+        freeChatConfig,
+        res,
+        query,
+        system_prompt,
+        context
+      );
+
+      res.end();
+    } catch (error) {
+      logger.error('API', 'Unhandled error in /free-chat/stream', { error });
+
+      if (!res.headersSent) {
+        return res.status(500).json({
+          type: 'error',
+          error: error instanceof Error ? error.message : 'Internal server error',
+        });
+      }
+
+      res.write(`data: ${JSON.stringify({ type: 'error', error: error instanceof Error ? error.message : 'Internal server error' })}\n\n`);
+      res.end();
+    }
   });
 
   /**
@@ -124,6 +218,90 @@ export function createApiRouter(config: OrchestratorConfig): Router {
         error: error instanceof Error ? error.message : 'Internal server error',
         layer: 'API',
       });
+    }
+  });
+
+  /**
+   * POST /api/recommend/stream
+   * Streaming endpoint for processing queries with SSE
+   *
+   * Request body:
+   * {
+   *   "query": string,
+   *   "user_context": UserFinanceContext,
+   *   "system_prompt": string (optional),
+   *   "output_format": string (optional)
+   * }
+   *
+   * Response: Server-Sent Events stream
+   */
+  router.post('/recommend/stream', async (req: Request, res: Response) => {
+    try {
+      logger.info('API', 'Received streaming recommend request', {
+        body_size: JSON.stringify(req.body).length,
+        has_custom_prompt: !!req.body.system_prompt,
+      });
+
+      // Validate request body
+      const parseResult = PlaygroundRequestSchema.safeParse(req.body);
+
+      if (!parseResult.success) {
+        logger.warn('API', 'Invalid request body for streaming', {
+          errors: parseResult.error.errors,
+        });
+
+        return res.status(400).json({
+          type: 'error',
+          error: 'Invalid request body',
+          layer: 'API',
+          details: parseResult.error.errors.map((e: { path: (string | number)[]; message: string }) => ({
+            path: e.path.join('.'),
+            message: e.message,
+          })),
+        });
+      }
+
+      const { query, user_context, system_prompt, output_format } = parseResult.data;
+
+      // Set up SSE headers
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+      res.flushHeaders();
+
+      // Cast config for streaming orchestrator
+      const streamingConfig: StreamingOrchestratorConfig = {
+        openai: config.openai,
+      };
+
+      // Process with streaming
+      await processQueryStreaming(
+        streamingConfig,
+        res,
+        query,
+        user_context,
+        system_prompt,
+        output_format
+      );
+
+      // End the stream
+      res.end();
+    } catch (error) {
+      logger.error('API', 'Unhandled error in /recommend/stream', { error });
+
+      // If headers haven't been sent, send error response
+      if (!res.headersSent) {
+        return res.status(500).json({
+          type: 'error',
+          error: error instanceof Error ? error.message : 'Internal server error',
+          layer: 'API',
+        });
+      }
+
+      // If streaming, send error event
+      res.write(`data: ${JSON.stringify({ type: 'error', error: error instanceof Error ? error.message : 'Internal server error' })}\n\n`);
+      res.end();
     }
   });
 

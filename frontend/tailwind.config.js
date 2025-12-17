@@ -4,6 +4,7 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
@@ -31,6 +32,17 @@ export default {
           800: '#27272a',
           900: '#18181b',
         },
+        // Dark mode color palette
+        dark: {
+          base: '#222020',
+          lighter: '#2d2b2b',
+          medium: '#3a3838',
+          hover: '#454343',
+          darker: '#1a1818',
+        },
+      },
+      width: {
+        '74': '18.5rem',
       },
     },
   },

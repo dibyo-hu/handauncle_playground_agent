@@ -25,18 +25,23 @@ import { logger } from '../utils/logger';
 
 const MAX_REPAIR_ATTEMPTS = 2;
 
-// Forbidden instrument patterns
+// Forbidden instrument patterns - must be specific to avoid false positives
+// e.g., "future" in "future goals" should NOT trigger, but "futures contract" should
 const FORBIDDEN_PATTERNS = [
-  /stock/i,
-  /share/i,
-  /crypto/i,
-  /bitcoin/i,
-  /ethereum/i,
-  /option/i,
-  /future/i,
-  /derivative/i,
-  /nifty\s*50\s*(call|put)/i,
-  /f\s*&\s*o/i,
+  /\b(individual\s+)?stocks?\b/i,           // "stock", "stocks", "individual stock"
+  /\bequity\s+shares?\b/i,                   // "equity share", "equity shares"
+  /\bcrypto(currency)?\b/i,                  // "crypto", "cryptocurrency"
+  /\bbitcoin\b/i,                            // "bitcoin"
+  /\bethereum\b/i,                           // "ethereum"
+  /\boptions?\s+(trading|contract|call|put|premium)/i, // options derivatives
+  /\bfutures?\s+(contract|trading|market)/i, // futures derivatives
+  /\bderivatives?\b/i,                       // "derivative", "derivatives"
+  /\bnifty\s*50?\s*(call|put|ce|pe)\b/i,     // Nifty options
+  /\b(bank\s*)?nifty\s+(options?|futures?)\b/i, // Index derivatives
+  /\bf\s*&\s*o\b/i,                          // "F&O"
+  /\bPMS\b/,                                 // Portfolio Management Service
+  /\bAIF\b/,                                 // Alternative Investment Fund
+  /\bULIP\b/i,                               // Unit Linked Insurance Plan
 ];
 
 /**

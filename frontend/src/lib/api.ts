@@ -97,3 +97,18 @@ export async function checkHealth(): Promise<{ status: string; timestamp: string
 
   return response.json();
 }
+
+/**
+ * Fetch default system prompt for free chat mode
+ */
+export async function fetchFreeChatDefaultPrompt(): Promise<{
+  system_prompt: string;
+}> {
+  const response = await fetch(`${API_BASE}/free-chat/default-prompt`);
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch free chat default prompt: ${response.status}`);
+  }
+
+  return response.json();
+}

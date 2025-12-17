@@ -105,12 +105,18 @@ app.listen(PORT, () => {
 ╠═══════════════════════════════════════════════════════════════╣
 ║  Server running at: http://localhost:${PORT}                     ║
 ║                                                               ║
-║  Endpoints:                                                   ║
-║    GET  /api/health          - Health check                   ║
-║    GET  /api/default-context - Get default user context       ║
-║    GET  /api/default-prompt  - Get default system prompt      ║
-║    POST /api/recommend       - Process query                  ║
-║    GET  /api/logs            - View debug logs                ║
+║  Finance Advisor Endpoints:                                   ║
+║    GET  /api/health           - Health check                  ║
+║    GET  /api/default-context  - Get default user context      ║
+║    GET  /api/default-prompt   - Get default system prompt     ║
+║    POST /api/recommend        - Process query (non-streaming) ║
+║    POST /api/recommend/stream - Process query (SSE streaming) ║
+║                                                               ║
+║  Tool Playground Endpoints:                                   ║
+║    GET  /api/free-chat/default-prompt - Get default prompt    ║
+║    POST /api/free-chat/stream         - Free chat (streaming) ║
+║                                                               ║
+║    GET  /api/logs             - View debug logs               ║
 ║                                                               ║
 ║  Environment:                                                 ║
 ║    OpenAI API: ${OPENAI_API_KEY ? '✓ Configured' : '✗ Missing'}                                 ║
