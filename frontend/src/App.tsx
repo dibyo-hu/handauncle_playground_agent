@@ -3,7 +3,7 @@
  *
  * Agentic Finance Playground - Dual mode chat interface
  * - Finance Advisor: Constrained Indian finance advisor with structured output
- * - Tool Playground: Free-form chat without constraints
+ * - Tool Playground: Free-form chat with Chat API v1
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -18,7 +18,6 @@ import {
   fetchDefaultContext,
   fetchDefaultPrompt,
   fetchDefaultOutputFormat,
-  fetchFreeChatDefaultPrompt,
   checkHealth,
 } from './lib/api';
 import type { UserFinanceContext, PlaygroundResponse } from './types';
@@ -31,13 +30,35 @@ interface Message {
   response?: PlaygroundResponse;
 }
 
-interface StreamEvent {
+// Finance Advisor stream event
+interface AdvisorStreamEvent {
   type: 'progress' | 'token' | 'classification' | 'web_search' | 'done' | 'error';
   content?: string;
   data?: unknown;
   error?: string;
-  stage?: string;
-  message?: string;
+}
+
+// Chat API v1 stream event
+interface ChatV1StreamEvent {
+  type: string;
+  messageId: string;
+  sequence: number;
+  payload: {
+    text?: string;
+    blockId?: string;
+    conversationId?: string;
+    isNewConversation?: boolean;
+    conversationTitle?: string;
+    error?: string;
+    [key: string]: unknown;
+  };
+}
+
+interface ConversationItem {
+  id: string;
+  title: string;
+  messageCount: number;
+  updatedAt: string;
 }
 
 type Status = 'idle' | 'loading' | 'error' | 'offline';
@@ -64,14 +85,75 @@ function AppContent() {
   const [outputFormat, setOutputFormat] = useState<string>('');
   const [defaultOutputFormat, setDefaultOutputFormat] = useState<string | null>(null);
 
-  // Tool Playground state
+  // Tool Playground state (Chat API v1)
   const [playgroundMessages, setPlaygroundMessages] = useState<Message[]>([]);
-  const [playgroundPrompt, setPlaygroundPrompt] = useState<string>('');
-  const [defaultPlaygroundPrompt, setDefaultPlaygroundPrompt] = useState<string | null>(null);
-  const [playgroundContext, setPlaygroundContext] = useState<string>('');
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<ConversationItem[]>([]);
+  const [playgroundModel, setPlaygroundModel] = useState<string>('gpt-4o');
+  const [playgroundTemperature, setPlaygroundTemperature] = useState<number>(1);
 
   // Get current messages based on active tab
   const messages = activeTab === 'advisor' ? advisorMessages : playgroundMessages;
+
+  // Fetch conversations list
+  const fetchConversations = useCallback(async () => {
+    try {
+      const response = await fetch('/v1/chat/conversations');
+      if (response.ok) {
+        const data = await response.json();
+        setConversations(data.data?.conversations || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch conversations:', err);
+    }
+  }, []);
+
+  // Load conversation messages
+  const loadConversation = useCallback(async (id: string) => {
+    try {
+      const response = await fetch(`/v1/chat/conversations/${id}`);
+      if (response.ok) {
+        const data = await response.json();
+        const conv = data.data?.conversation;
+        if (conv) {
+          // Convert conversation messages to our Message format
+          const loadedMessages: Message[] = conv.messages.map((msg: {
+            messageId: string;
+            role: 'user' | 'assistant';
+            content: { blocks: Array<{ text: string }> };
+            createdAt: string;
+          }) => ({
+            id: msg.messageId,
+            role: msg.role,
+            content: msg.content.blocks.map((b: { text: string }) => b.text).join('\n'),
+            timestamp: msg.createdAt,
+          }));
+          setPlaygroundMessages(loadedMessages);
+          setConversationId(id);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load conversation:', err);
+    }
+  }, []);
+
+  // Delete conversation
+  const deleteConversation = useCallback(async (id: string) => {
+    try {
+      const response = await fetch(`/v1/chat/conversations/${id}`, {
+        method: 'DELETE',
+      });
+      if (response.ok) {
+        setConversations(prev => prev.filter(c => c.id !== id));
+        if (conversationId === id) {
+          setConversationId(null);
+          setPlaygroundMessages([]);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to delete conversation:', err);
+    }
+  }, [conversationId]);
 
   // Initialize - fetch defaults
   useEffect(() => {
@@ -79,11 +161,10 @@ function AppContent() {
       try {
         await checkHealth();
 
-        const [contextData, promptData, formatData, freeChatPromptData] = await Promise.all([
+        const [contextData, promptData, formatData] = await Promise.all([
           fetchDefaultContext(),
           fetchDefaultPrompt(),
           fetchDefaultOutputFormat(),
-          fetchFreeChatDefaultPrompt(),
         ]);
 
         // Finance Advisor defaults
@@ -93,10 +174,6 @@ function AppContent() {
         setSystemPrompt(promptData.system_prompt);
         setDefaultOutputFormat(formatData.output_format);
         setOutputFormat(formatData.output_format);
-
-        // Tool Playground defaults
-        setDefaultPlaygroundPrompt(freeChatPromptData.system_prompt);
-        setPlaygroundPrompt(freeChatPromptData.system_prompt);
 
         setStatus('idle');
       } catch (err) {
@@ -180,7 +257,7 @@ function AppContent() {
               if (!line.trim() || !line.startsWith('data: ')) continue;
 
               try {
-                const event: StreamEvent = JSON.parse(line.slice(6));
+                const event: AdvisorStreamEvent = JSON.parse(line.slice(6));
 
                 switch (event.type) {
                   case 'token':
@@ -246,7 +323,7 @@ function AppContent() {
     [userContext, systemPrompt, defaultPrompt, outputFormat, defaultOutputFormat]
   );
 
-  // Handle sending a message in Tool Playground mode
+  // Handle sending a message in Tool Playground mode (Chat API v1)
   const handlePlaygroundMessage = useCallback(
     async (content: string) => {
       currentMessageRef.current = '';
@@ -273,15 +350,23 @@ function AppContent() {
       abortControllerRef.current = new AbortController();
 
       try {
-        const customPrompt = playgroundPrompt !== defaultPlaygroundPrompt ? playgroundPrompt : undefined;
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'X-Stream': 'true',
+        };
 
-        const response = await fetch('/api/free-chat/stream', {
+        // Add conversation ID if exists
+        if (conversationId) {
+          headers['X-Conversation-Id'] = conversationId;
+        }
+
+        const response = await fetch('/v1/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({
-            query: content,
-            system_prompt: customPrompt,
-            context: playgroundContext || undefined,
+            message: content,
+            model: playgroundModel,
+            temperature: playgroundTemperature,
           }),
           signal: abortControllerRef.current.signal,
         });
@@ -299,30 +384,33 @@ function AppContent() {
             if (done) break;
 
             buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
 
-            for (const line of lines) {
-              if (!line.trim() || !line.startsWith('data: ')) continue;
+            // Parse SSE events (event: type\ndata: json\n\n)
+            const eventBlocks = buffer.split('\n\n');
+            buffer = eventBlocks.pop() || '';
 
-              try {
-                const event: StreamEvent = JSON.parse(line.slice(6));
+            for (const block of eventBlocks) {
+              if (!block.trim()) continue;
 
-                switch (event.type) {
-                  case 'token':
-                    if (event.content) {
-                      currentMessageRef.current += event.content;
-                      setPlaygroundMessages(prev =>
-                        prev.map(msg =>
-                          msg.id === assistantId
-                            ? { ...msg, content: currentMessageRef.current }
-                            : msg
-                        )
-                      );
-                    }
-                    break;
+              const lines = block.split('\n');
+              let eventData: ChatV1StreamEvent | null = null;
 
-                  case 'done':
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  try {
+                    eventData = JSON.parse(line.slice(6));
+                  } catch {
+                    // Skip malformed JSON
+                  }
+                }
+              }
+
+              if (!eventData) continue;
+
+              switch (eventData.type) {
+                case 'text.delta':
+                  if (eventData.payload.text) {
+                    currentMessageRef.current += eventData.payload.text;
                     setPlaygroundMessages(prev =>
                       prev.map(msg =>
                         msg.id === assistantId
@@ -330,27 +418,47 @@ function AppContent() {
                           : msg
                       )
                     );
-                    setIsGenerating(false);
-                    break;
+                  }
+                  break;
 
-                  case 'error':
-                    setPlaygroundMessages(prev =>
-                      prev.map(msg =>
-                        msg.id === assistantId
-                          ? { ...msg, content: `Error: ${event.error || 'An error occurred'}` }
-                          : msg
-                      )
-                    );
+                case 'conversation.info':
+                  if (eventData.payload.conversationId) {
+                    setConversationId(eventData.payload.conversationId);
+                    // Refresh conversations list
+                    fetchConversations();
+                  }
+                  break;
+
+                case 'message.completed':
+                case 'stream.end':
+                  setPlaygroundMessages(prev =>
+                    prev.map(msg =>
+                      msg.id === assistantId
+                        ? { ...msg, content: currentMessageRef.current }
+                        : msg
+                    )
+                  );
+                  if (eventData.type === 'stream.end') {
                     setIsGenerating(false);
-                    break;
-                }
-              } catch {
-                // Skip malformed JSON
+                  }
+                  break;
+
+                case 'message.failed':
+                  setPlaygroundMessages(prev =>
+                    prev.map(msg =>
+                      msg.id === assistantId
+                        ? { ...msg, content: `Error: ${eventData?.payload.error || 'An error occurred'}` }
+                        : msg
+                    )
+                  );
+                  setIsGenerating(false);
+                  break;
               }
             }
           }
         } finally {
           reader.releaseLock();
+          setIsGenerating(false);
         }
       } catch (err) {
         if (err instanceof Error && err.name !== 'AbortError') {
@@ -365,7 +473,7 @@ function AppContent() {
         setIsGenerating(false);
       }
     },
-    [playgroundPrompt, defaultPlaygroundPrompt, playgroundContext]
+    [conversationId, playgroundModel, playgroundTemperature, fetchConversations]
   );
 
   // Handle sending a message - routes to appropriate handler
@@ -395,8 +503,19 @@ function AppContent() {
       setAdvisorMessages([]);
     } else {
       setPlaygroundMessages([]);
+      setConversationId(null);
     }
   }, [activeTab]);
+
+  // Handle conversation selection
+  const handleConversationSelect = useCallback((id: string | null) => {
+    if (id) {
+      loadConversation(id);
+    } else {
+      setPlaygroundMessages([]);
+      setConversationId(null);
+    }
+  }, [loadConversation]);
 
   // Handle context change (Finance Advisor)
   const handleContextChange = useCallback((newContext: UserFinanceContext) => {
@@ -479,11 +598,15 @@ function AppContent() {
         />
       ) : (
         <PlaygroundSidebar
-          systemPrompt={playgroundPrompt}
-          defaultPrompt={defaultPlaygroundPrompt}
-          onPromptChange={setPlaygroundPrompt}
-          context={playgroundContext}
-          onContextChange={setPlaygroundContext}
+          conversationId={conversationId}
+          onConversationSelect={handleConversationSelect}
+          conversations={conversations}
+          onRefreshConversations={fetchConversations}
+          onDeleteConversation={deleteConversation}
+          model={playgroundModel}
+          onModelChange={setPlaygroundModel}
+          temperature={playgroundTemperature}
+          onTemperatureChange={setPlaygroundTemperature}
           onNewChat={handleNewChat}
           disabled={isGenerating}
         />
@@ -523,7 +646,7 @@ function AppContent() {
                 <p className="text-gray-500 dark:text-gray-400 max-w-md">
                   {activeTab === 'advisor'
                     ? 'Ask me anything about Indian personal finance. Modify the parameters in the sidebar to experiment with different contexts and AI behavior.'
-                    : 'Free-form chat without constraints. Customize the system prompt and context in the sidebar to experiment.'}
+                    : 'Chat with AI freely. Select a model, adjust temperature, and manage conversations in the sidebar.'}
                 </p>
               </div>
             ) : (

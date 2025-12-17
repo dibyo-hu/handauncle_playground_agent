@@ -9,6 +9,7 @@ import cors from 'cors';
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
 import { createApiRouter } from './routes/api';
+import { createV1Router } from './routes/v1';
 import { logger } from './utils/logger';
 
 // Load environment variables
@@ -35,7 +36,8 @@ const app = express();
 app.use(cors({
   origin: ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Conversation-Id', 'X-Stream'],
+  exposedHeaders: ['X-Conversation-Id', 'X-Is-New-Conversation', 'X-Conversation-Title'],
 }));
 
 app.use(express.json({ limit: '1mb' }));
@@ -62,6 +64,10 @@ const apiRouter = createApiRouter({
 });
 
 app.use('/api', apiRouter);
+
+// Mount V1 Chat API (Tool Playground)
+const v1Router = createV1Router(openai);
+app.use('/v1', v1Router);
 
 // Root endpoint
 app.get('/', (_req, res) => {
@@ -105,18 +111,18 @@ app.listen(PORT, () => {
 ╠═══════════════════════════════════════════════════════════════╣
 ║  Server running at: http://localhost:${PORT}                     ║
 ║                                                               ║
-║  Finance Advisor Endpoints:                                   ║
+║  Finance Advisor Endpoints (/api):                            ║
 ║    GET  /api/health           - Health check                  ║
 ║    GET  /api/default-context  - Get default user context      ║
 ║    GET  /api/default-prompt   - Get default system prompt     ║
-║    POST /api/recommend        - Process query (non-streaming) ║
 ║    POST /api/recommend/stream - Process query (SSE streaming) ║
-║                                                               ║
-║  Tool Playground Endpoints:                                   ║
-║    GET  /api/free-chat/default-prompt - Get default prompt    ║
-║    POST /api/free-chat/stream         - Free chat (streaming) ║
-║                                                               ║
 ║    GET  /api/logs             - View debug logs               ║
+║                                                               ║
+║  Tool Playground Chat API (/v1):                              ║
+║    POST   /v1/chat                  - Chat (auto-creates conv)║
+║    GET    /v1/chat/conversations    - List all conversations  ║
+║    GET    /v1/chat/conversations/:id - Get conversation       ║
+║    DELETE /v1/chat/conversations/:id - Delete conversation    ║
 ║                                                               ║
 ║  Environment:                                                 ║
 ║    OpenAI API: ${OPENAI_API_KEY ? '✓ Configured' : '✗ Missing'}                                 ║

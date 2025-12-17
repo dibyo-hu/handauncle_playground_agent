@@ -1,6 +1,6 @@
 /**
  * Playground Sidebar Component
- * Simplified sidebar for Tool Playground mode with just system prompt and context
+ * Sidebar for Tool Playground mode with model settings and conversation list
  */
 
 import { useState, useEffect, useRef } from 'react';
@@ -10,37 +10,61 @@ import {
   Plus,
   ChevronDown,
   ChevronRight,
-  RotateCcw,
+  Trash2,
+  MessageSquare,
   Sun,
   Moon,
   Monitor,
+  Settings,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useTheme } from '../lib/theme-context';
 
+interface ConversationItem {
+  id: string;
+  title: string;
+  messageCount: number;
+  updatedAt: string;
+}
+
 interface PlaygroundSidebarProps {
-  systemPrompt: string;
-  defaultPrompt: string | null;
-  onPromptChange: (prompt: string) => void;
-  context: string;
-  onContextChange: (context: string) => void;
+  conversationId: string | null;
+  onConversationSelect: (id: string | null) => void;
+  conversations: ConversationItem[];
+  onRefreshConversations: () => void;
+  onDeleteConversation: (id: string) => void;
+  model: string;
+  onModelChange: (model: string) => void;
+  temperature: number;
+  onTemperatureChange: (temp: number) => void;
   onNewChat: () => void;
   disabled?: boolean;
 }
 
+const MODELS = [
+  { value: 'gpt-4o', label: 'GPT-4o' },
+  { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+  { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
+  { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
+];
+
 export function PlaygroundSidebar({
-  systemPrompt,
-  defaultPrompt,
-  onPromptChange,
-  context,
-  onContextChange,
+  conversationId,
+  onConversationSelect,
+  conversations,
+  onRefreshConversations,
+  onDeleteConversation,
+  model,
+  onModelChange,
+  temperature,
+  onTemperatureChange,
   onNewChat,
   disabled = false,
 }: PlaygroundSidebarProps) {
   const [isOpen, setIsOpen] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
-  const [promptExpanded, setPromptExpanded] = useState(false);
-  const [contextExpanded, setContextExpanded] = useState(false);
+  const [settingsExpanded, setSettingsExpanded] = useState(false);
+  const [conversationsExpanded, setConversationsExpanded] = useState(true);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const { theme, setTheme } = useTheme();
 
@@ -75,13 +99,10 @@ export function PlaygroundSidebar({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isMobile, isOpen]);
 
-  const isPromptModified = systemPrompt !== defaultPrompt;
-
-  const resetPrompt = () => {
-    if (defaultPrompt) {
-      onPromptChange(defaultPrompt);
-    }
-  };
+  // Refresh conversations on mount
+  useEffect(() => {
+    onRefreshConversations();
+  }, [onRefreshConversations]);
 
   const themeOptions = [
     { value: 'system', icon: Monitor, label: 'System' },
@@ -146,111 +167,127 @@ export function PlaygroundSidebar({
             New Chat
           </button>
 
-          {/* System Prompt Editor */}
+          {/* Model Settings */}
           <div className="space-y-2">
             <button
-              onClick={() => setPromptExpanded(!promptExpanded)}
-              className="flex items-center justify-between w-full text-left"
+              onClick={() => setSettingsExpanded(!settingsExpanded)}
+              className="flex items-center gap-2 w-full text-left"
             >
-              <div className="flex items-center gap-2">
-                {promptExpanded ? (
-                  <ChevronDown className="w-4 h-4 text-gray-500" />
-                ) : (
-                  <ChevronRight className="w-4 h-4 text-gray-500" />
-                )}
-                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  System Prompt
-                </span>
-                {isPromptModified && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
-                    Modified
-                  </span>
-                )}
-              </div>
-              {isPromptModified && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    resetPrompt();
-                  }}
-                  className="p-1 rounded hover:bg-gray-200 dark:hover:bg-dark-hover"
-                  title="Reset to default"
-                >
-                  <RotateCcw className="w-3.5 h-3.5 text-gray-500" />
-                </button>
+              {settingsExpanded ? (
+                <ChevronDown className="w-4 h-4 text-gray-500" />
+              ) : (
+                <ChevronRight className="w-4 h-4 text-gray-500" />
               )}
+              <Settings className="w-4 h-4 text-gray-500" />
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                Settings
+              </span>
             </button>
 
-            {promptExpanded && (
-              <textarea
-                value={systemPrompt}
-                onChange={(e) => onPromptChange(e.target.value)}
-                disabled={disabled}
-                className={cn(
-                  'w-full h-48 p-3 text-sm rounded-lg border resize-none',
-                  'bg-white dark:bg-dark-medium',
-                  'border-gray-200 dark:border-gray-700',
-                  'text-gray-900 dark:text-gray-100',
-                  'focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500',
-                  'disabled:opacity-50 disabled:cursor-not-allowed',
-                  'scrollbar-custom'
-                )}
-                placeholder="Enter system prompt..."
-              />
+            {settingsExpanded && (
+              <div className="ml-6 space-y-3">
+                {/* Model Selection */}
+                <div>
+                  <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                    Model
+                  </label>
+                  <select
+                    value={model}
+                    onChange={(e) => onModelChange(e.target.value)}
+                    disabled={disabled}
+                    className={cn(
+                      'w-full px-3 py-2 text-sm rounded-lg border',
+                      'bg-white dark:bg-dark-medium',
+                      'border-gray-200 dark:border-gray-700',
+                      'text-gray-900 dark:text-gray-100',
+                      'focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500',
+                      'disabled:opacity-50 disabled:cursor-not-allowed'
+                    )}
+                  >
+                    {MODELS.map((m) => (
+                      <option key={m.value} value={m.value}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Temperature */}
+                <div>
+                  <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                    Temperature: {temperature.toFixed(1)}
+                  </label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="2"
+                    step="0.1"
+                    value={temperature}
+                    onChange={(e) => onTemperatureChange(parseFloat(e.target.value))}
+                    disabled={disabled}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-[10px] text-gray-400">
+                    <span>Focused</span>
+                    <span>Creative</span>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
 
-          {/* Context Editor */}
+          {/* Conversations List */}
           <div className="space-y-2">
             <button
-              onClick={() => setContextExpanded(!contextExpanded)}
-              className="flex items-center justify-between w-full text-left"
+              onClick={() => setConversationsExpanded(!conversationsExpanded)}
+              className="flex items-center gap-2 w-full text-left"
             >
-              <div className="flex items-center gap-2">
-                {contextExpanded ? (
-                  <ChevronDown className="w-4 h-4 text-gray-500" />
-                ) : (
-                  <ChevronRight className="w-4 h-4 text-gray-500" />
-                )}
-                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Context / Parameters
-                </span>
-                {context && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
-                    Set
-                  </span>
-                )}
-              </div>
-              {context && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onContextChange('');
-                  }}
-                  className="p-1 rounded hover:bg-gray-200 dark:hover:bg-dark-hover"
-                  title="Clear context"
-                >
-                  <RotateCcw className="w-3.5 h-3.5 text-gray-500" />
-                </button>
+              {conversationsExpanded ? (
+                <ChevronDown className="w-4 h-4 text-gray-500" />
+              ) : (
+                <ChevronRight className="w-4 h-4 text-gray-500" />
               )}
+              <MessageSquare className="w-4 h-4 text-gray-500" />
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                Conversations ({conversations.length})
+              </span>
             </button>
 
-            {contextExpanded && (
-              <textarea
-                value={context}
-                onChange={(e) => onContextChange(e.target.value)}
-                disabled={disabled}
-                className={cn(
-                  'w-full h-48 p-3 text-sm rounded-lg border resize-none',
-                  'bg-white dark:bg-dark-medium',
-                  'border-gray-200 dark:border-gray-700',
-                  'text-gray-900 dark:text-gray-100',
-                  'focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500',
-                  'disabled:opacity-50 disabled:cursor-not-allowed',
-                  'scrollbar-custom'
+            {conversationsExpanded && (
+              <div className="ml-2 space-y-1 max-h-64 overflow-y-auto scrollbar-custom">
+                {conversations.length === 0 ? (
+                  <p className="text-xs text-gray-400 dark:text-gray-500 py-2 px-2">
+                    No conversations yet
+                  </p>
+                ) : (
+                  conversations.map((conv) => (
+                    <div
+                      key={conv.id}
+                      className={cn(
+                        'group flex items-center justify-between px-2 py-1.5 rounded-lg cursor-pointer transition-colors',
+                        conversationId === conv.id
+                          ? 'bg-primary-100 dark:bg-primary-900/30'
+                          : 'hover:bg-gray-200 dark:hover:bg-dark-hover'
+                      )}
+                      onClick={() => onConversationSelect(conv.id)}
+                    >
+                      <span className="text-xs text-gray-700 dark:text-gray-300 truncate flex-1">
+                        {conv.title || 'Untitled'}
+                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteConversation(conv.id);
+                        }}
+                        className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-100 dark:hover:bg-red-900/30 transition-all"
+                        title="Delete conversation"
+                      >
+                        <Trash2 className="w-3 h-3 text-red-500" />
+                      </button>
+                    </div>
+                  ))
                 )}
-                placeholder="Add any context or parameters to include with each message..."
-              />
+              </div>
             )}
           </div>
         </div>
