@@ -19,13 +19,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useTheme } from '../lib/theme-context';
-
-interface ConversationItem {
-  id: string;
-  title: string;
-  messageCount: number;
-  updatedAt: string;
-}
+import { ConversationItem } from '../lib/chat-api';
 
 interface PlaygroundSidebarProps {
   conversationId: string | null;
@@ -174,9 +168,9 @@ export function PlaygroundSidebar({
               className="flex items-center gap-2 w-full text-left"
             >
               {settingsExpanded ? (
-                <ChevronDown className="w-4 h-4 text-gray-500" />
+                <ChevronDown className="w-4 h-4 text-gray-500 flex-shrink-0" />
               ) : (
-                <ChevronRight className="w-4 h-4 text-gray-500" />
+                <ChevronRight className="w-4 h-4 text-gray-500 flex-shrink-0" />
               )}
               <Settings className="w-4 h-4 text-gray-500" />
               <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -243,9 +237,9 @@ export function PlaygroundSidebar({
               className="flex items-center gap-2 w-full text-left"
             >
               {conversationsExpanded ? (
-                <ChevronDown className="w-4 h-4 text-gray-500" />
+                <ChevronDown className="w-4 h-4 text-gray-500 flex-shrink-0" />
               ) : (
-                <ChevronRight className="w-4 h-4 text-gray-500" />
+                <ChevronRight className="w-4 h-4 text-gray-500 flex-shrink-0" />
               )}
               <MessageSquare className="w-4 h-4 text-gray-500" />
               <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -262,14 +256,14 @@ export function PlaygroundSidebar({
                 ) : (
                   conversations.map((conv) => (
                     <div
-                      key={conv.id}
+                      key={conv.conversationId}
                       className={cn(
                         'group flex items-center justify-between px-2 py-1.5 rounded-lg cursor-pointer transition-colors',
-                        conversationId === conv.id
+                        conversationId === conv.conversationId
                           ? 'bg-primary-100 dark:bg-primary-900/30'
                           : 'hover:bg-gray-200 dark:hover:bg-dark-hover'
                       )}
-                      onClick={() => onConversationSelect(conv.id)}
+                      onClick={() => onConversationSelect(conv.conversationId)}
                     >
                       <span className="text-xs text-gray-700 dark:text-gray-300 truncate flex-1">
                         {conv.title || 'Untitled'}
@@ -277,7 +271,7 @@ export function PlaygroundSidebar({
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          onDeleteConversation(conv.id);
+                          onDeleteConversation(conv.conversationId);
                         }}
                         className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-100 dark:hover:bg-red-900/30 transition-all"
                         title="Delete conversation"

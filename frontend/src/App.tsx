@@ -14,20 +14,58 @@ import { PlaygroundSidebar } from './components/PlaygroundSidebar';
 import { TabSwitcher, TabMode } from './components/TabSwitcher';
 import { ChatMessage } from './components/ChatMessage';
 import { ChatInput } from './components/ChatInput';
+import { NewConversationModal } from './components/NewConversationModal';
 import {
-  fetchDefaultContext,
-  fetchDefaultPrompt,
-  fetchDefaultOutputFormat,
-  checkHealth,
-} from './lib/api';
+  sendChatMessage,
+  listConversations,
+  getConversation,
+  deleteConversation,
+  readChatStream,
+  type ConversationItem,
+} from './lib/chat-api';
 import type { UserFinanceContext, PlaygroundResponse } from './types';
+
+// Content blocks for rich message rendering
+interface TextBlock {
+  type: 'text';
+  blockId: string;
+  text: string;
+}
+
+interface ReasoningBlock {
+  type: 'reasoning';
+  blockId: string;
+  text: string;
+}
+
+interface ToolCallBlock {
+  type: 'tool';
+  blockId: string;
+  toolName: string;
+  arguments: string;
+  status: 'executing' | 'completed' | 'failed';
+  result?: unknown;
+  error?: string;
+}
+
+interface VisualBlock {
+  type: 'visual';
+  blockId: string;
+  visualType?: string;
+  intent?: string;
+  state?: unknown;
+  status: 'creating' | 'updating' | 'completed';
+}
+
+type ContentBlock = TextBlock | ReasoningBlock | ToolCallBlock | VisualBlock;
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
-  content: string;
+  content: string; // Main text content for display
   timestamp: string;
   response?: PlaygroundResponse;
+  blocks?: ContentBlock[]; // Rich content blocks for Tool Playground
 }
 
 // Finance Advisor stream event
@@ -38,29 +76,6 @@ interface AdvisorStreamEvent {
   error?: string;
 }
 
-// Chat API v1 stream event
-interface ChatV1StreamEvent {
-  type: string;
-  messageId: string;
-  sequence: number;
-  payload: {
-    text?: string;
-    blockId?: string;
-    conversationId?: string;
-    isNewConversation?: boolean;
-    conversationTitle?: string;
-    error?: string;
-    [key: string]: unknown;
-  };
-}
-
-interface ConversationItem {
-  id: string;
-  title: string;
-  messageCount: number;
-  updatedAt: string;
-}
-
 type Status = 'idle' | 'loading' | 'error' | 'offline';
 
 function AppContent() {
@@ -69,7 +84,7 @@ function AppContent() {
 
   // Common state
   const [status, setStatus] = useState<Status>('loading');
-  const [backendError, setBackendError] = useState<string | null>(null);
+  const [backendError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -79,11 +94,11 @@ function AppContent() {
   // Finance Advisor state
   const [advisorMessages, setAdvisorMessages] = useState<Message[]>([]);
   const [userContext, setUserContext] = useState<UserFinanceContext | null>(null);
-  const [defaultContext, setDefaultContext] = useState<UserFinanceContext | null>(null);
+  const [defaultContext] = useState<UserFinanceContext | null>(null);
   const [systemPrompt, setSystemPrompt] = useState<string>('');
-  const [defaultPrompt, setDefaultPrompt] = useState<string | null>(null);
+  const [defaultPrompt] = useState<string | null>(null);
   const [outputFormat, setOutputFormat] = useState<string>('');
-  const [defaultOutputFormat, setDefaultOutputFormat] = useState<string | null>(null);
+  const [defaultOutputFormat] = useState<string | null>(null);
 
   // Tool Playground state (Chat API v1)
   const [playgroundMessages, setPlaygroundMessages] = useState<Message[]>([]);
@@ -91,6 +106,9 @@ function AppContent() {
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [playgroundModel, setPlaygroundModel] = useState<string>('gpt-4o');
   const [playgroundTemperature, setPlaygroundTemperature] = useState<number>(1);
+  const [playgroundSystemPrompt, setPlaygroundSystemPrompt] = useState<string>('');
+  const [playgroundUserContext, setPlaygroundUserContext] = useState<string>('');
+  const [showNewConversationModal, setShowNewConversationModal] = useState(false);
 
   // Get current messages based on active tab
   const messages = activeTab === 'advisor' ? advisorMessages : playgroundMessages;
@@ -98,11 +116,8 @@ function AppContent() {
   // Fetch conversations list
   const fetchConversations = useCallback(async () => {
     try {
-      const response = await fetch('/v1/chat/conversations');
-      if (response.ok) {
-        const data = await response.json();
-        setConversations(data.data?.conversations || []);
-      }
+      const conversations = await listConversations();
+      setConversations(conversations);
     } catch (err) {
       console.error('Failed to fetch conversations:', err);
     }
@@ -110,27 +125,80 @@ function AppContent() {
 
   // Load conversation messages
   const loadConversation = useCallback(async (id: string) => {
+    console.log('Loading conversation:', id);
     try {
-      const response = await fetch(`/v1/chat/conversations/${id}`);
-      if (response.ok) {
-        const data = await response.json();
-        const conv = data.data?.conversation;
-        if (conv) {
-          // Convert conversation messages to our Message format
-          const loadedMessages: Message[] = conv.messages.map((msg: {
-            messageId: string;
-            role: 'user' | 'assistant';
-            content: { blocks: Array<{ text: string }> };
-            createdAt: string;
-          }) => ({
+      const data = await getConversation(id);
+      console.log('Conversation loaded:', data);
+      if (data) {
+        // Convert conversation messages to our Message format
+        const loadedMessages: Message[] = data.messages.map((msg) => {
+          // Handle user messages (content is a string)
+          if (msg.role === 'user') {
+            return {
+              id: msg.messageId,
+              role: msg.role,
+              content: typeof msg.content === 'string' ? msg.content : '',
+              timestamp: msg.createdAt,
+            };
+          }
+          
+          // Handle assistant messages (content has blocks)
+          const contentObj = typeof msg.content === 'object' ? msg.content : { blocks: [] };
+          const blocks = Array.isArray(contentObj.blocks) ? contentObj.blocks : [];
+          
+          return {
             id: msg.messageId,
             role: msg.role,
-            content: msg.content.blocks.map((b: { text: string }) => b.text).join('\n'),
+            content: blocks.map((b) => b.text || '').join('\n'),
             timestamp: msg.createdAt,
-          }));
-          setPlaygroundMessages(loadedMessages);
-          setConversationId(id);
-        }
+            blocks: blocks.map((block): ContentBlock => {
+            // Map API blocks to our ContentBlock types
+            if (block.type === 'text') {
+              return {
+                type: 'text',
+                blockId: block.blockId,
+                text: block.text || '',
+              } as TextBlock;
+            } else if (block.type === 'reasoning') {
+              return {
+                type: 'reasoning',
+                blockId: block.blockId,
+                text: block.text || '',
+              } as ReasoningBlock;
+            } else if (block.type === 'tool') {
+              return {
+                type: 'tool',
+                blockId: block.blockId,
+                toolName: (block as any).toolName || 'unknown',
+                arguments: (block as any).arguments || '',
+                status: (block as any).status || 'completed',
+                result: (block as any).result,
+                error: (block as any).error,
+              } as ToolCallBlock;
+            } else if (block.type === 'visual') {
+              return {
+                type: 'visual',
+                blockId: block.blockId,
+                visualType: (block as any).visualType,
+                intent: (block as any).intent,
+                state: (block as any).state,
+                status: (block as any).status || 'completed',
+              } as VisualBlock;
+            }
+            // Default to text block
+            return {
+              type: 'text',
+              blockId: block.blockId,
+              text: block.text || '',
+            } as TextBlock;
+          }),
+          };
+        });
+        
+        console.log('Loaded messages:', loadedMessages);
+        setPlaygroundMessages(loadedMessages);
+        console.log('[loadConversation] Setting conversationId to:', id);
+        setConversationId(id);
       }
     } catch (err) {
       console.error('Failed to load conversation:', err);
@@ -138,26 +206,25 @@ function AppContent() {
   }, []);
 
   // Delete conversation
-  const deleteConversation = useCallback(async (id: string) => {
+  const deleteConversationHandler = useCallback(async (id: string) => {
     try {
-      const response = await fetch(`/v1/chat/conversations/${id}`, {
-        method: 'DELETE',
-      });
-      if (response.ok) {
-        setConversations(prev => prev.filter(c => c.id !== id));
-        if (conversationId === id) {
-          setConversationId(null);
-          setPlaygroundMessages([]);
-        }
+      await deleteConversation(id);
+      setConversations(prev => prev.filter(c => c.conversationId !== id));
+      if (conversationId === id) {
+        setConversationId(null);
+        setPlaygroundMessages([]);
       }
     } catch (err) {
       console.error('Failed to delete conversation:', err);
     }
   }, [conversationId]);
 
-  // Initialize - fetch defaults
+  // Initialize - fetch defaults for Finance Advisor (only if needed)
   useEffect(() => {
     async function init() {
+      // Skip Finance Advisor initialization - only using Tool Playground
+      // If you need Finance Advisor, uncomment the code below
+      /*
       try {
         await checkHealth();
 
@@ -174,15 +241,15 @@ function AppContent() {
         setSystemPrompt(promptData.system_prompt);
         setDefaultOutputFormat(formatData.output_format);
         setOutputFormat(formatData.output_format);
-
-        setStatus('idle');
       } catch (err) {
-        console.error('Initialization failed:', err);
+        console.warn('Finance Advisor backend unavailable:', err);
         setBackendError(
-          err instanceof Error ? err.message : 'Failed to connect to backend'
+          'Finance Advisor backend is offline. Tool Playground is still available.'
         );
-        setStatus('offline');
       }
+      */
+      
+      setStatus('idle');
     }
 
     init();
@@ -344,121 +411,374 @@ function AppContent() {
         role: 'assistant',
         content: '',
         timestamp: new Date().toISOString(),
+        blocks: [],
       };
 
       setPlaygroundMessages(prev => [...prev, assistantMessage]);
       abortControllerRef.current = new AbortController();
 
+      // Track active blocks by blockId
+      const activeBlocks = new Map<string, ContentBlock>();
+
       try {
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-          'X-Stream': 'true',
-        };
-
-        // Add conversation ID if exists
-        if (conversationId) {
-          headers['X-Conversation-Id'] = conversationId;
-        }
-
-        const response = await fetch('/v1/chat', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
+        console.log('[sendMessage] Sending with conversationId:', conversationId);
+        const response = await sendChatMessage(
+          {
             message: content,
             model: playgroundModel,
             temperature: playgroundTemperature,
-          }),
-          signal: abortControllerRef.current.signal,
-        });
+            systemPrompt: playgroundSystemPrompt || undefined,
+            userContext: playgroundUserContext || undefined,
+          },
+          conversationId || undefined,
+          abortControllerRef.current.signal
+        );
 
-        if (!response.ok) throw new Error(`Request failed: ${response.status}`);
-        if (!response.body) throw new Error('No response body');
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-
-            // Parse SSE events (event: type\ndata: json\n\n)
-            const eventBlocks = buffer.split('\n\n');
-            buffer = eventBlocks.pop() || '';
-
-            for (const block of eventBlocks) {
-              if (!block.trim()) continue;
-
-              const lines = block.split('\n');
-              let eventData: ChatV1StreamEvent | null = null;
-
-              for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                  try {
-                    eventData = JSON.parse(line.slice(6));
-                  } catch {
-                    // Skip malformed JSON
-                  }
+        // Process the stream using the generator function
+        for await (const event of readChatStream(response)) {
+          switch (event.type) {
+            // Text content events
+            case 'text.block.started':
+              if (event.payload.blockId) {
+                // Only create a new block if it doesn't exist yet
+                if (!activeBlocks.has(event.payload.blockId)) {
+                  console.log('[text.block.started] Creating new text block:', event.payload.blockId);
+                  const textBlock: TextBlock = {
+                    type: 'text',
+                    blockId: event.payload.blockId,
+                    text: '',
+                  };
+                  activeBlocks.set(event.payload.blockId, textBlock);
+                } else {
+                  console.log('[text.block.started] Block already exists, skipping:', event.payload.blockId);
                 }
               }
+              break;
 
-              if (!eventData) continue;
-
-              switch (eventData.type) {
-                case 'text.delta':
-                  if (eventData.payload.text) {
-                    currentMessageRef.current += eventData.payload.text;
-                    setPlaygroundMessages(prev =>
-                      prev.map(msg =>
-                        msg.id === assistantId
-                          ? { ...msg, content: currentMessageRef.current }
-                          : msg
-                      )
-                    );
-                  }
-                  break;
-
-                case 'conversation.info':
-                  if (eventData.payload.conversationId) {
-                    setConversationId(eventData.payload.conversationId);
-                    // Refresh conversations list
-                    fetchConversations();
-                  }
-                  break;
-
-                case 'message.completed':
-                case 'stream.end':
+            case 'text.delta':
+              // API sends 'text' field in text.delta events (not 'delta' as documented)
+              const deltaText = event.payload.delta || event.payload.text;
+              if (deltaText && event.payload.blockId) {
+                console.log('[text.delta]', {
+                  blockId: event.payload.blockId,
+                  delta: deltaText,
+                  existingBlock: activeBlocks.get(event.payload.blockId),
+                });
+                
+                let block = activeBlocks.get(event.payload.blockId);
+                
+                // Create text block if it doesn't exist (for text after tool calls)
+                if (!block) {
+                  console.log('[text.delta] Creating new text block:', event.payload.blockId);
+                  block = {
+                    type: 'text',
+                    blockId: event.payload.blockId,
+                    text: '',
+                  } as TextBlock;
+                  activeBlocks.set(event.payload.blockId, block);
+                }
+                
+                if (block.type === 'text') {
+                  block.text += deltaText;
+                  currentMessageRef.current += deltaText;
+                  
+                  console.log('[text.delta] Updated text block:', {
+                    blockId: event.payload.blockId,
+                    text: block.text,
+                    totalBlocks: activeBlocks.size,
+                  });
+                  
                   setPlaygroundMessages(prev =>
                     prev.map(msg =>
                       msg.id === assistantId
-                        ? { ...msg, content: currentMessageRef.current }
+                        ? {
+                            ...msg,
+                            content: currentMessageRef.current,
+                            blocks: Array.from(activeBlocks.values()),
+                          }
                         : msg
                     )
                   );
-                  if (eventData.type === 'stream.end') {
-                    setIsGenerating(false);
-                  }
-                  break;
-
-                case 'message.failed':
-                  setPlaygroundMessages(prev =>
-                    prev.map(msg =>
-                      msg.id === assistantId
-                        ? { ...msg, content: `Error: ${eventData?.payload.error || 'An error occurred'}` }
-                        : msg
-                    )
-                  );
-                  setIsGenerating(false);
-                  break;
+                }
               }
-            }
+              break;
+
+            case 'text.block.completed':
+              // Text block is complete - no action needed
+              break;
+
+            // Reasoning events
+            case 'reasoning.started':
+              if (event.payload.blockId) {
+                const reasoningBlock: ReasoningBlock = {
+                  type: 'reasoning',
+                  blockId: event.payload.blockId,
+                  text: '',
+                };
+                activeBlocks.set(event.payload.blockId, reasoningBlock);
+                
+                setPlaygroundMessages(prev =>
+                  prev.map(msg =>
+                    msg.id === assistantId
+                      ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                      : msg
+                  )
+                );
+              }
+              break;
+
+            case 'reasoning.delta':
+              if (event.payload.text && event.payload.blockId) {
+                const block = activeBlocks.get(event.payload.blockId);
+                if (block && block.type === 'reasoning') {
+                  block.text += event.payload.text;
+                  
+                  setPlaygroundMessages(prev =>
+                    prev.map(msg =>
+                      msg.id === assistantId
+                        ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        : msg
+                    )
+                  );
+                }
+              }
+              break;
+
+            case 'reasoning.completed':
+              // Reasoning block is complete
+              break;
+
+            // Tool call events
+            case 'tool.call.started':
+            case 'agent.tool.call.started':
+              if (event.payload.toolCallId && event.payload.toolName) {
+                const toolBlock: ToolCallBlock = {
+                  type: 'tool',
+                  blockId: event.payload.toolCallId,
+                  toolName: event.payload.toolName,
+                  arguments: '',
+                  status: 'executing',
+                };
+                activeBlocks.set(event.payload.toolCallId, toolBlock);
+                
+                setPlaygroundMessages(prev =>
+                  prev.map(msg =>
+                    msg.id === assistantId
+                      ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                      : msg
+                  )
+                );
+              }
+              break;
+
+            case 'tool.call.arguments':
+            case 'agent.tool.call.arguments':
+              if (event.payload.arguments && event.payload.toolCallId) {
+                const block = activeBlocks.get(event.payload.toolCallId);
+                if (block && block.type === 'tool') {
+                  block.arguments = event.payload.arguments;
+                  
+                  setPlaygroundMessages(prev =>
+                    prev.map(msg =>
+                      msg.id === assistantId
+                        ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        : msg
+                    )
+                  );
+                }
+              }
+              break;
+
+            case 'tool.call.executing':
+            case 'agent.tool.call.executing':
+              if (event.payload.toolCallId) {
+                const block = activeBlocks.get(event.payload.toolCallId);
+                if (block && block.type === 'tool') {
+                  block.status = 'executing';
+                  
+                  setPlaygroundMessages(prev =>
+                    prev.map(msg =>
+                      msg.id === assistantId
+                        ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        : msg
+                    )
+                  );
+                }
+              }
+              break;
+
+            case 'tool.call.completed':
+            case 'agent.tool.call.completed':
+              if (event.payload.toolCallId) {
+                const block = activeBlocks.get(event.payload.toolCallId);
+                if (block && block.type === 'tool') {
+                  block.status = 'completed';
+                  block.result = event.payload.result;
+                  
+                  setPlaygroundMessages(prev =>
+                    prev.map(msg =>
+                      msg.id === assistantId
+                        ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        : msg
+                    )
+                  );
+                }
+              }
+              break;
+
+            case 'tool.call.failed':
+            case 'agent.tool.call.failed':
+              if (event.payload.toolCallId) {
+                const block = activeBlocks.get(event.payload.toolCallId);
+                if (block && block.type === 'tool') {
+                  block.status = 'failed';
+                  block.error = event.payload.error;
+                  
+                  setPlaygroundMessages(prev =>
+                    prev.map(msg =>
+                      msg.id === assistantId
+                        ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        : msg
+                    )
+                  );
+                }
+              }
+              break;
+
+            // Visual events
+            case 'visual.intent':
+              if (event.payload.visualId) {
+                const visualBlock: VisualBlock = {
+                  type: 'visual',
+                  blockId: event.payload.visualId,
+                  visualType: event.payload.visualType,
+                  intent: event.payload.intent,
+                  status: 'creating',
+                };
+                activeBlocks.set(event.payload.visualId, visualBlock);
+                
+                setPlaygroundMessages(prev =>
+                  prev.map(msg =>
+                    msg.id === assistantId
+                      ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        : msg
+                  )
+                );
+              }
+              break;
+
+            case 'visual.block.created':
+              if (event.payload.visualId) {
+                const block = activeBlocks.get(event.payload.visualId);
+                if (block && block.type === 'visual') {
+                  block.status = 'updating';
+                  
+                  setPlaygroundMessages(prev =>
+                    prev.map(msg =>
+                      msg.id === assistantId
+                        ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        : msg
+                    )
+                  );
+                }
+              }
+              break;
+
+            case 'visual.patch':
+              if (event.payload.visualId && event.payload.patch) {
+                const block = activeBlocks.get(event.payload.visualId);
+                if (block && block.type === 'visual') {
+                  block.state = event.payload.patch;
+                  
+                  setPlaygroundMessages(prev =>
+                    prev.map(msg =>
+                      msg.id === assistantId
+                        ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        : msg
+                    )
+                  );
+                }
+              }
+              break;
+
+            case 'visual.completed':
+              if (event.payload.visualId) {
+                const block = activeBlocks.get(event.payload.visualId);
+                if (block && block.type === 'visual') {
+                  block.status = 'completed';
+                  
+                  setPlaygroundMessages(prev =>
+                    prev.map(msg =>
+                      msg.id === assistantId
+                        ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        : msg
+                    )
+                  );
+                }
+              }
+              break;
+
+            // Conversation and control events
+            case 'message.started':
+              // Message started - assistant is ready to respond
+              break;
+
+            case 'conversation.info':
+              if (event.payload.conversationId) {
+                setConversationId(event.payload.conversationId);
+                // Refresh conversations list
+                fetchConversations();
+              }
+              break;
+
+            case 'message.completed':
+              setPlaygroundMessages(prev =>
+                prev.map(msg =>
+                  msg.id === assistantId
+                    ? {
+                        ...msg,
+                        content: currentMessageRef.current,
+                        blocks: Array.from(activeBlocks.values()),
+                      }
+                    : msg
+                )
+              );
+              break;
+
+            case 'stream.end':
+              setPlaygroundMessages(prev =>
+                prev.map(msg =>
+                  msg.id === assistantId
+                    ? {
+                        ...msg,
+                        content: currentMessageRef.current,
+                        blocks: Array.from(activeBlocks.values()),
+                      }
+                    : msg
+                )
+              );
+              setIsGenerating(false);
+              break;
+
+            case 'message.failed':
+              setPlaygroundMessages(prev =>
+                prev.map(msg =>
+                  msg.id === assistantId
+                    ? { ...msg, content: `Error: ${event.payload.error || 'An error occurred'}` }
+                    : msg
+                )
+              );
+              setIsGenerating(false);
+              break;
+
+            // Ignore keepalive events
+            case 'stream.keepalive':
+              break;
+
+            default:
+              // Log unknown event types for debugging
+              console.log('Unknown event type:', event.type, event);
           }
-        } finally {
-          reader.releaseLock();
-          setIsGenerating(false);
         }
       } catch (err) {
         if (err instanceof Error && err.name !== 'AbortError') {
@@ -471,9 +791,11 @@ function AppContent() {
           );
         }
         setIsGenerating(false);
+      } finally {
+        setIsGenerating(false);
       }
     },
-    [conversationId, playgroundModel, playgroundTemperature, fetchConversations]
+    [conversationId, playgroundModel, playgroundTemperature, playgroundSystemPrompt, playgroundUserContext, fetchConversations]
   );
 
   // Handle sending a message - routes to appropriate handler
@@ -502,10 +824,28 @@ function AppContent() {
     if (activeTab === 'advisor') {
       setAdvisorMessages([]);
     } else {
-      setPlaygroundMessages([]);
-      setConversationId(null);
+      // Show modal for Tool Playground
+      setShowNewConversationModal(true);
     }
   }, [activeTab]);
+
+  // Handle saving new conversation with system prompt and user context
+  const handleSaveNewConversation = useCallback((systemPrompt: string, userContext: string) => {
+    setPlaygroundSystemPrompt(systemPrompt);
+    setPlaygroundUserContext(userContext);
+    setPlaygroundMessages([]);
+    setConversationId(null);
+    setShowNewConversationModal(false);
+  }, []);
+
+  // Handle skipping new conversation setup
+  const handleSkipNewConversation = useCallback(() => {
+    setPlaygroundSystemPrompt('');
+    setPlaygroundUserContext('');
+    setPlaygroundMessages([]);
+    setConversationId(null);
+    setShowNewConversationModal(false);
+  }, []);
 
   // Handle conversation selection
   const handleConversationSelect = useCallback((id: string | null) => {
@@ -539,45 +879,15 @@ function AppContent() {
         <div className="text-center">
           <Loader2 className="w-8 h-8 animate-spin text-primary-500 mx-auto mb-3" />
           <p className="text-gray-600 dark:text-gray-400">
-            Connecting to backend...
+            Loading...
           </p>
         </div>
       </div>
     );
   }
 
-  // Offline state
-  if (status === 'offline') {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-white dark:bg-dark-base p-4">
-        <div className="text-center max-w-md">
-          <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <h1 className="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-2">
-            Backend Offline
-          </h1>
-          <p className="text-gray-600 dark:text-gray-400 mb-4">{backendError}</p>
-          <div className="bg-gray-100 dark:bg-dark-lighter rounded-lg p-4 text-left text-sm">
-            <p className="font-medium mb-2 text-gray-800 dark:text-gray-200">
-              To start the backend:
-            </p>
-            <code className="block bg-gray-200 dark:bg-dark-medium p-2 rounded text-xs text-gray-800 dark:text-gray-200">
-              cd agentic-playground/backend
-              <br />
-              npm install
-              <br />
-              npm run dev
-            </code>
-          </div>
-          <button
-            onClick={() => window.location.reload()}
-            className="mt-4 px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors"
-          >
-            Retry Connection
-          </button>
-        </div>
-      </div>
-    );
-  }
+  // Show offline state only for Finance Advisor tab when backend is down
+  const showOfflineWarning = activeTab === 'advisor' && backendError && !userContext;
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-white dark:bg-dark-base">
@@ -602,7 +912,7 @@ function AppContent() {
           onConversationSelect={handleConversationSelect}
           conversations={conversations}
           onRefreshConversations={fetchConversations}
-          onDeleteConversation={deleteConversation}
+          onDeleteConversation={deleteConversationHandler}
           model={playgroundModel}
           onModelChange={setPlaygroundModel}
           temperature={playgroundTemperature}
@@ -626,6 +936,51 @@ function AppContent() {
         >
           {/* Top gradient fade */}
           <div className="sticky top-0 left-0 right-0 z-10 h-8 bg-gradient-to-b from-white dark:from-dark-base via-white/80 dark:via-dark-base/80 to-transparent pointer-events-none" />
+
+          {/* Finance Advisor Backend Offline Warning */}
+          {showOfflineWarning && (
+            <div className="mx-auto max-w-4xl px-4 pt-4">
+              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4">
+                <div className="flex items-start">
+                  <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 mt-0.5 mr-3 flex-shrink-0" />
+                  <div className="flex-1">
+                    <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-100 mb-1">
+                      Finance Advisor Backend Offline
+                    </h3>
+                    <p className="text-sm text-amber-800 dark:text-amber-200 mb-2">
+                      {backendError}
+                    </p>
+                    <div className="bg-amber-100 dark:bg-amber-900/40 rounded p-2 text-xs">
+                      <p className="font-medium text-amber-900 dark:text-amber-100 mb-1">
+                        To start the Finance Advisor backend:
+                      </p>
+                      <code className="block bg-white dark:bg-dark-medium p-2 rounded text-amber-900 dark:text-amber-100 font-mono">
+                        cd handauncle_playground_agent/backend
+                        <br />
+                        npm install
+                        <br />
+                        npm run dev
+                      </code>
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <button
+                        onClick={() => window.location.reload()}
+                        className="text-xs px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded transition-colors"
+                      >
+                        Retry Connection
+                      </button>
+                      <button
+                        onClick={() => setActiveTab('playground')}
+                        className="text-xs px-3 py-1.5 bg-gray-600 hover:bg-gray-700 text-white rounded transition-colors"
+                      >
+                        Use Tool Playground Instead
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="mx-auto max-w-4xl px-4">
             {messages.length === 0 ? (
@@ -663,6 +1018,7 @@ function AppContent() {
                       idx === messages.length - 1
                     }
                     response={message.response}
+                    blocks={message.blocks}
                   />
                 ))}
                 <div ref={messagesEndRef} />
@@ -686,6 +1042,14 @@ function AppContent() {
           />
         </div>
       </main>
+
+      {/* New Conversation Modal */}
+      <NewConversationModal
+        isOpen={showNewConversationModal}
+        onClose={() => setShowNewConversationModal(false)}
+        onSave={handleSaveNewConversation}
+        onSkip={handleSkipNewConversation}
+      />
     </div>
   );
 }
