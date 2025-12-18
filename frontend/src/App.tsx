@@ -417,8 +417,20 @@ function AppContent() {
       setPlaygroundMessages(prev => [...prev, assistantMessage]);
       abortControllerRef.current = new AbortController();
 
-      // Track active blocks by blockId
+      // Track active blocks by blockId with their sequence numbers
       const activeBlocks = new Map<string, ContentBlock>();
+      const blockSequences = new Map<string, number>();
+
+      // Helper to get sorted blocks by sequence
+      const getSortedBlocks = (): ContentBlock[] => {
+        return Array.from(activeBlocks.entries())
+          .sort((a, b) => {
+            const seqA = blockSequences.get(a[0]) || 0;
+            const seqB = blockSequences.get(b[0]) || 0;
+            return seqA - seqB;
+          })
+          .map(([_, block]) => block);
+      };
 
       try {
         console.log('[sendMessage] Sending with conversationId:', conversationId);
@@ -442,15 +454,23 @@ function AppContent() {
               if (event.payload.blockId) {
                 // Only create a new block if it doesn't exist yet
                 if (!activeBlocks.has(event.payload.blockId)) {
-                  console.log('[text.block.started] Creating new text block:', event.payload.blockId);
+                  console.log('[text.block.started] Creating new text block:', event.payload.blockId, 'sequence:', event.sequence);
                   const textBlock: TextBlock = {
                     type: 'text',
                     blockId: event.payload.blockId,
                     text: '',
                   };
                   activeBlocks.set(event.payload.blockId, textBlock);
+                  blockSequences.set(event.payload.blockId, event.sequence);
                 } else {
-                  console.log('[text.block.started] Block already exists, skipping:', event.payload.blockId);
+                  // Block exists - update sequence if this is a continuation (higher sequence)
+                  const currentSeq = blockSequences.get(event.payload.blockId) || 0;
+                  if (event.sequence > currentSeq) {
+                    console.log('[text.block.started] Updating sequence for continued block:', event.payload.blockId, 'from', currentSeq, 'to', event.sequence);
+                    blockSequences.set(event.payload.blockId, event.sequence);
+                  } else {
+                    console.log('[text.block.started] Block already exists, skipping:', event.payload.blockId);
+                  }
                 }
               }
               break;
@@ -469,13 +489,14 @@ function AppContent() {
                 
                 // Create text block if it doesn't exist (for text after tool calls)
                 if (!block) {
-                  console.log('[text.delta] Creating new text block:', event.payload.blockId);
+                  console.log('[text.delta] Creating new text block:', event.payload.blockId, 'sequence:', event.sequence);
                   block = {
                     type: 'text',
                     blockId: event.payload.blockId,
                     text: '',
                   } as TextBlock;
                   activeBlocks.set(event.payload.blockId, block);
+                  blockSequences.set(event.payload.blockId, event.sequence);
                 }
                 
                 if (block.type === 'text') {
@@ -494,7 +515,7 @@ function AppContent() {
                         ? {
                             ...msg,
                             content: currentMessageRef.current,
-                            blocks: Array.from(activeBlocks.values()),
+                            blocks: getSortedBlocks(),
                           }
                         : msg
                     )
@@ -516,11 +537,12 @@ function AppContent() {
                   text: '',
                 };
                 activeBlocks.set(event.payload.blockId, reasoningBlock);
+                blockSequences.set(event.payload.blockId, event.sequence);
                 
                 setPlaygroundMessages(prev =>
                   prev.map(msg =>
                     msg.id === assistantId
-                      ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                      ? { ...msg, blocks: getSortedBlocks() }
                       : msg
                   )
                 );
@@ -536,7 +558,7 @@ function AppContent() {
                   setPlaygroundMessages(prev =>
                     prev.map(msg =>
                       msg.id === assistantId
-                        ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        ? { ...msg, blocks: getSortedBlocks() }
                         : msg
                     )
                   );
@@ -560,11 +582,12 @@ function AppContent() {
                   status: 'executing',
                 };
                 activeBlocks.set(event.payload.toolCallId, toolBlock);
+                blockSequences.set(event.payload.toolCallId, event.sequence);
                 
                 setPlaygroundMessages(prev =>
                   prev.map(msg =>
                     msg.id === assistantId
-                      ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                      ? { ...msg, blocks: getSortedBlocks() }
                       : msg
                   )
                 );
@@ -581,7 +604,7 @@ function AppContent() {
                   setPlaygroundMessages(prev =>
                     prev.map(msg =>
                       msg.id === assistantId
-                        ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        ? { ...msg, blocks: getSortedBlocks() }
                         : msg
                     )
                   );
@@ -599,7 +622,7 @@ function AppContent() {
                   setPlaygroundMessages(prev =>
                     prev.map(msg =>
                       msg.id === assistantId
-                        ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        ? { ...msg, blocks: getSortedBlocks() }
                         : msg
                     )
                   );
@@ -618,7 +641,7 @@ function AppContent() {
                   setPlaygroundMessages(prev =>
                     prev.map(msg =>
                       msg.id === assistantId
-                        ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        ? { ...msg, blocks: getSortedBlocks() }
                         : msg
                     )
                   );
@@ -637,7 +660,7 @@ function AppContent() {
                   setPlaygroundMessages(prev =>
                     prev.map(msg =>
                       msg.id === assistantId
-                        ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        ? { ...msg, blocks: getSortedBlocks() }
                         : msg
                     )
                   );
@@ -656,11 +679,12 @@ function AppContent() {
                   status: 'creating',
                 };
                 activeBlocks.set(event.payload.visualId, visualBlock);
+                blockSequences.set(event.payload.visualId, event.sequence);
                 
                 setPlaygroundMessages(prev =>
                   prev.map(msg =>
                     msg.id === assistantId
-                      ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                      ? { ...msg, blocks: getSortedBlocks() }
                         : msg
                   )
                 );
@@ -676,7 +700,7 @@ function AppContent() {
                   setPlaygroundMessages(prev =>
                     prev.map(msg =>
                       msg.id === assistantId
-                        ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        ? { ...msg, blocks: getSortedBlocks() }
                         : msg
                     )
                   );
@@ -693,7 +717,7 @@ function AppContent() {
                   setPlaygroundMessages(prev =>
                     prev.map(msg =>
                       msg.id === assistantId
-                        ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        ? { ...msg, blocks: getSortedBlocks() }
                         : msg
                     )
                   );
@@ -710,7 +734,7 @@ function AppContent() {
                   setPlaygroundMessages(prev =>
                     prev.map(msg =>
                       msg.id === assistantId
-                        ? { ...msg, blocks: Array.from(activeBlocks.values()) }
+                        ? { ...msg, blocks: getSortedBlocks() }
                         : msg
                     )
                   );
@@ -738,7 +762,7 @@ function AppContent() {
                     ? {
                         ...msg,
                         content: currentMessageRef.current,
-                        blocks: Array.from(activeBlocks.values()),
+                        blocks: getSortedBlocks(),
                       }
                     : msg
                 )
@@ -752,7 +776,7 @@ function AppContent() {
                     ? {
                         ...msg,
                         content: currentMessageRef.current,
-                        blocks: Array.from(activeBlocks.values()),
+                        blocks: getSortedBlocks(),
                       }
                     : msg
                 )
